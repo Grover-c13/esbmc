@@ -16,6 +16,9 @@ exprt jimple_constant::to_exprt(
   const std::string &,
   const std::string &) const
 {
+  // A null reference constant (e.g. an optional coroutine/Continuation arg).
+  if (value == "null")
+    return gen_zero(pointer_typet(empty_typet()));
   auto as_number = std::stoi(value);
   return constant_exprt(
     integer2binary(as_number, 10), integer2string(as_number), int_type());
@@ -460,7 +463,11 @@ exprt jimple_newarray::to_exprt(
     auto to_convert =
       base_type.is_pointer() ? base_type.subtype().width() : base_type.width();
 
-    type_width = std::stoi(to_convert.as_string()); // we want bytes
+    // Opaque/library types (e.g. an unmodelled reference being `new`ed in dead
+    // coroutine scaffolding) carry no width; keep the default rather than aborting.
+    const std::string ws = to_convert.as_string();
+    if (!ws.empty())
+      type_width = std::stoi(ws); // we want bytes
   }
 
   auto new_expr = exprt("*", uint_type());
