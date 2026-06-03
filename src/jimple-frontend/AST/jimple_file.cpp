@@ -144,7 +144,12 @@ void jimple_file::declare(contextt &ctx) const
       tmp = field->to_exprt(ctx, name, name);
       comp.swap(tmp);
       t.components().push_back(comp);
-      total_size += std::stoi(comp.type().width().as_string());
+      // Only bitvector fields carry a width; reference-typed fields (class types,
+      // e.g. a lambda singleton's INSTANCE) have none, so skip them in the size
+      // sum instead of std::stoi-ing an empty string (which aborts).
+      const std::string w = comp.type().width().as_string();
+      if (!w.empty())
+        total_size += std::stoi(w);
 
       // A static field is shared global state. Register a global symbol so
       // jimple_static_member can read and write it (e.g. across threads).
