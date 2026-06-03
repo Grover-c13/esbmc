@@ -23,8 +23,38 @@ jobs:
             .deps
           key: esbmc-deps-${{ runner.os }}-v1
 
-      - name: Build ESBMC
-        run: ./scripts/build.sh
+      # ccache caches compiled object files across runs. Since iterations touch
+      # only a few jimple-frontend files, warm builds recompile just those +
+      # relink, dropping the ~20-min cold build to a few minutes.
+      - name: ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: esbmc-jimple-${{ runner.os }}
+          max-size: 2G
+
+      # Phase 1: configure deps (downloads LLVM/solvers, creates build/).
+      - name: Configure (deps)
+        run: ./scripts/build.sh deps
+
+      # Phase 2: reconfigure for speed — route compiles through ccache and drop
+      # frontends/solvers this spike doesn't need (we only use Jimple + Z3).
+      - name: Trim build (ccache + minimal frontends/solvers)
+        run: |
+          cmake build \
+            -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DENABLE_PYTHON_FRONTEND=Off \
+            -DENABLE_SOLIDITY_FRONTEND=Off \
+            -DENABLE_BOOLECTOR=Off \
+            -DENABLE_BITWUZLA=Off \
+            -DENABLE_CVC5=Off \
+            -DENABLE_CSMITH=Off \
+            -DBUILD_TESTING=Off \
+            -DENABLE_REGRESSION=Off
+
+      # Phase 3: compile + install (cmake --build / --install, via build.sh).
+      - name: Build + install ESBMC
+        run: ./scripts/build.sh build install
 
       - name: Locate esbmc binary
         id: bin
