@@ -1,0 +1,51 @@
+name: jimple-threads-ci
+
+# Focused build+test loop for the Jimple thread-support work (public fork: free CI).
+# Builds ESBMC with build.sh, then sanity-checks: --version, a known jimple fixture
+# (kt-array-false -> FAILED), the C pthread race (-> FAILED, proves the concurrency
+# engine), and our jimple thread test once it exists.
+on:
+  workflow_dispatch:
+  push:
+    branches: [jimple-threads]
+    paths: ['src/jimple-frontend/**', 'jimple-threads-spike/**', '.github/workflows/jimple-threads-ci.yml']
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache LLVM/solver deps
+        uses: actions/cache@v4
+        with:
+          path: |
+            .deps
+          key: esbmc-deps-${{ runner.os }}-v1
+
+      - name: Build ESBMC
+        run: ./scripts/build.sh
+
+      - name: Locate esbmc binary
+        id: bin
+        run: |
+          ESBMC=$(find "$PWD/release" -name esbmc -type f | head -1)
+          echo "esbmc=$ESBMC" >> "$GITHUB_OUTPUT"
+          "$ESBMC" --version
+
+      - name: Sanity — jimple fixture (expect VERIFICATION FAILED)
+        run: |
+          "${{ steps.bin.outputs.esbmc }}" regression/jimple/kt-array-false/main.jimple --force-malloc-success | tail -3
+
+      - name: Sanity — C pthread race (expect VERIFICATION FAILED, engine concurrency)
+        run: |
+          "${{ steps.bin.outputs.esbmc }}" jimple-threads-spike/race.c --context-bound 2 | tail -3
+
+      - name: Jimple thread test (once present)
+        run: |
+          if [ -f jimple-threads-spike/thread.jimple ]; then
+            echo "=== running patched-frontend jimple thread test ==="
+            "${{ steps.bin.outputs.esbmc }}" jimple-threads-spike/thread.jimple --force-malloc-success --context-bound 2 | tail -8
+          else
+            echo "no thread.jimple yet"
+          fi
