@@ -24,7 +24,10 @@ typet jimple_type::get_base_type(const contextt &ctx) const
   default:
     auto symbol = ctx.find_symbol("tag-" + name);
     if (symbol == nullptr)
-      throw "Type not found: " + name;
+      // Unknown class/interface — typically a library type we don't convert
+      // (e.g. java.lang.Runnable appearing only in a cast). Model it as an
+      // opaque pointer instead of aborting; such values aren't used as data.
+      return pointer_typet(empty_typet());
     return pointer_typet(symbol->get_type());
   }
 }
