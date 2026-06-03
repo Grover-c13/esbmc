@@ -128,6 +128,10 @@ jobs:
           jf="jimple-threads-spike/coroutine.jimple"
           [ -f "$jf" ] || exit 0
           set +e
-          "${{ steps.bin.outputs.esbmc }}" "$jf" --force-malloc-success --context-bound 2 2>&1 | tail -8
+          # Pointer/alignment checks are disabled: the continuation/scope objects
+          # are modelled as opaque, so their derefs are scaffolding artifacts, not
+          # the property under test (the counter race -> division by zero).
+          "${{ steps.bin.outputs.esbmc }}" "$jf" --force-malloc-success \
+            --no-pointer-check --no-align-check --context-bound 2 2>&1 | tail -10
           echo "(coroutine is WIP; not gating the build)"
           exit 0
