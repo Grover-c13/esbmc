@@ -110,6 +110,13 @@ configure_project() {
     "${SOLVER_FLAGS[@]}"
     "-DCMAKE_POLICY_VERSION_MINIMUM=3.5"
   )
+  # Allow callers (e.g. CI) to inject extra -D flags, such as
+  # -DFETCHCONTENT_BASE_DIR=<cached dir> so the prebuilt LLVM/solver downloads
+  # are reused across runs instead of re-fetched into the ephemeral build dir.
+  if [[ -n "${EXTRA_CMAKE_ARGS:-}" ]]; then
+    # shellcheck disable=SC2206
+    cmake_args+=(${EXTRA_CMAKE_ARGS})
+  fi
   local cmd=()
   if [[ ${#COMPILER_ENV[@]} -gt 0 ]]; then
     cmd=(env "${COMPILER_ENV[@]}" cmake .. "${cmake_args[@]}")
