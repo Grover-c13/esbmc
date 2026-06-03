@@ -253,6 +253,17 @@ void execution_statet::symex_step(reachability_treet &art)
     {
       // Fall through to base class
       goto_symext::symex_step(art);
+
+      // A spawned thread whose entry function returns leaves an empty call
+      // stack. Unlike main (handled above), and unlike pthread threads (whose
+      // trampoline calls __ESBMC_terminate_thread), a directly-spawned thread
+      // function is not otherwise marked finished. End it here; otherwise the
+      // reachability tree's path snapshot (merge_statet::merge_statet ->
+      // top()) dereferences the empty call stack and segfaults.
+      if (
+        !get_active_state().thread_ended &&
+        get_active_state().call_stack.empty())
+        end_thread();
     }
     break;
   case ATOMIC_BEGIN:
