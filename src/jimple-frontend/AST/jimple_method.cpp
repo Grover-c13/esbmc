@@ -2,13 +2,10 @@
 #include <util/std_code.h>
 #include <util/expr_util.h>
 
-exprt jimple_method::to_exprt(
+void jimple_method::declare(
   contextt &ctx,
-  const std::string &class_name,
-  const std::string &) const
+  const std::string &class_name) const
 {
-  // Dummy will be return expression. It will just hold the type
-  exprt dummy;
   code_typet method_type;
   typet inner_type;
   inner_type = type.to_typet(ctx);
@@ -88,9 +85,27 @@ exprt jimple_method::to_exprt(
     method_type.make_ellipsis();
 
   added_symbol.set_type(method_type);
-  added_symbol.set_value(body->to_exprt(ctx, class_name, this->name));
+}
 
-  return dummy;
+void jimple_method::define(
+  contextt &ctx,
+  const std::string &class_name) const
+{
+  symbolt &added_symbol = *ctx.find_symbol(get_method_name(class_name, name));
+  added_symbol.set_value(body->to_exprt(ctx, class_name, this->name));
+}
+
+exprt jimple_method::to_exprt(
+  contextt &ctx,
+  const std::string &class_name,
+  const std::string &) const
+{
+  // Single-pass convenience. Multi-class programs declare every class first
+  // (jimple_languaget::typecheck) so cross-class references resolve, then fill
+  // bodies; here we just do both for a lone class.
+  declare(ctx, class_name);
+  define(ctx, class_name);
+  return exprt();
 }
 
 void jimple_method::from_json(const json &j)

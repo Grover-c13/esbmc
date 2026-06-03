@@ -105,16 +105,11 @@ void jimple_file::load_file(const std::string &path)
   from_json(j);
 }
 
-exprt jimple_file::to_exprt(contextt &ctx) const
+void jimple_file::declare(contextt &ctx) const
 {
-  /*
-   * A class is just a type, this method will just register
-   * its type and return a code_skipt.
-   *
-   * However, the list of symbols are going to be updated with
-   * the static functions and variables, and constructor */
-
-  exprt e = code_skipt();
+  // Phase 1: register the class type, static-field globals, and the method
+  // symbols (signatures). Bodies are filled later in define(), so that
+  // cross-class references resolve regardless of class order.
 
   std::string id, name;
   id = "tag-" + this->class_name;
@@ -176,13 +171,31 @@ exprt jimple_file::to_exprt(contextt &ctx) const
   t.set("width", total_size);
   added_symbol->set_type(t);
 
-  // Add the methods and definitions
+  // Register method symbols (signatures only); bodies are filled in define().
   for (auto const &field : body)
   {
-    if (!std::dynamic_pointer_cast<jimple_class_field>(field))
-    {
-      field->to_exprt(ctx, name, name);
-    }
+    auto m = std::dynamic_pointer_cast<jimple_method>(field);
+    if (m)
+      m->declare(ctx, name);
   }
-  return e;
+}
+
+void jimple_file::define(contextt &ctx) const
+{
+  // Phase 2: fill method bodies. All classes have been declared by now, so
+  // cross-class calls/field accesses resolve.
+  for (auto const &field : body)
+  {
+    auto m = std::dynamic_pointer_cast<jimple_method>(field);
+    if (m)
+      m->define(ctx, this->class_name);
+  }
+}
+
+exprt jimple_file::to_exprt(contextt &ctx) const
+{
+  // Single-class convenience: declare then define this one class.
+  declare(ctx);
+  define(ctx);
+  return code_skipt();
 }

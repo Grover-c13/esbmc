@@ -141,6 +141,19 @@ void jimple_languaget::setup_main(contextt &context)
       matches.push_back(id);
     return true; // collect all; ambiguity is reported after the scan
   });
+
+  // Fallback when auto-detecting: Kotlin emits main()/"main_0", but a plain
+  // Java entry is main(String[]) -> base name "main_1". Accept any arity. (A
+  // Kotlin String[] bridge just delegates to the real main, so either works.)
+  if (matches.empty() && config.main == "")
+  {
+    context.foreach_operand_in_order([&](const symbolt &s) {
+      const std::string &n = s.name.as_string();
+      if (s.get_type().is_code() && n.rfind("main_", 0) == 0)
+        matches.push_back(s.id);
+    });
+  }
+
   if (matches.empty())
     abort();
 

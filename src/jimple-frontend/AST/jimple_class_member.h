@@ -72,6 +72,12 @@ public:
     const std::string &class_name,
     const std::string &file_name) const override;
 
+  // Two-phase conversion so multi-class programs link: declare() registers the
+  // method symbol (signature, @this, @parameters); define() fills the body
+  // (which may reference other classes). to_exprt() does both for a lone class.
+  void declare(contextt &ctx, const std::string &class_name) const;
+  void define(contextt &ctx, const std::string &class_name) const;
+
   std::string name;
   jimple_modifiers modifiers;
   std::string throws;

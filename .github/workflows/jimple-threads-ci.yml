@@ -16,12 +16,23 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Cache LLVM/solver deps
+      - name: Cache GMP source tarball
         uses: actions/cache@v4
         with:
           path: |
             .deps
           key: esbmc-deps-${{ runner.os }}-v1
+
+      # The heavy "deps" cost is FetchContent downloading + xz-extracting ~1.5 GB
+      # of prebuilt LLVM (+Z3/CVC5) into the ephemeral build/_deps every run.
+      # Redirect FetchContent's base dir to this stable, cached location so the
+      # download+extract happens once; later runs reuse it (URL-hash stamps make
+      # FetchContent skip the work). Keyed on the dependency URLs.
+      - name: Cache prebuilt LLVM/solvers (FetchContent)
+        uses: actions/cache@v4
+        with:
+          path: ~/esbmc-fc
+          key: esbmc-fc-${{ runner.os }}-${{ hashFiles('scripts/cmake/Options.cmake', 'scripts/cmake/ExternalDependencies.cmake') }}
 
       # ccache caches compiled object files across runs. Since iterations touch
       # only a few jimple-frontend files, warm builds recompile just those +
@@ -32,9 +43,12 @@ jobs:
           key: esbmc-jimple-${{ runner.os }}
           max-size: 2G
 
-      # Phase 1: configure deps (downloads LLVM/solvers, creates build/).
+      # Phase 1: configure deps. EXTRA_CMAKE_ARGS points FetchContent at the
+      # cached dir above (build.sh forwards it to cmake).
       - name: Configure (deps)
-        run: ./scripts/build.sh deps
+        run: |
+          export EXTRA_CMAKE_ARGS="-DFETCHCONTENT_BASE_DIR=$HOME/esbmc-fc"
+          ./scripts/build.sh deps
 
       # Phase 2: reconfigure for speed — route compiles through ccache and drop
       # frontends/solvers this spike doesn't need (we only use Jimple + Z3).
@@ -74,14 +88,16 @@ jobs:
       # Regression gates. Each fixture must reach VERIFICATION FAILED with the
       # division-by-zero property; a crash, a SUCCESSFUL verdict, or a different
       # property fails the job. Covers: single-class thread race (thread), the
-      # multi-class linker (multiclass: A.main calls B.answer), and a real-shape
+      # multi-class linker (multiclass: A.main calls B.answer), a real-shape
       # 2-class thread program (mcthread: cross-class static field + instance
-      # run() spawned from another class).
+      # run() spawned from another class), and javathread — the SAME program
+      # emitted by our Soot-based converter from real javac bytecode
+      # (Main/Worker.java), proving the producer end-to-end.
       - name: Jimple thread + multi-class gates (expect FAILED, division by zero)
         run: |
           ESBMC="${{ steps.bin.outputs.esbmc }}"
           fail=0
-          for f in thread multiclass mcthread; do
+          for f in thread multiclass mcthread javathread; do
             jf="jimple-threads-spike/$f.jimple"
             [ -f "$jf" ] || { echo "skip: $jf absent"; continue; }
             echo "==================== $f ===================="

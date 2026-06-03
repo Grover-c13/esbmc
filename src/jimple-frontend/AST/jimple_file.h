@@ -55,6 +55,11 @@ public:
    */
   virtual exprt to_exprt(contextt &ctx) const;
 
+  // Two-phase conversion for multi-class linking: declare() registers the class
+  // type, static globals and method signatures; define() fills method bodies.
+  void declare(contextt &ctx) const;
+  void define(contextt &ctx) const;
+
   bool is_interface() const
   {
     return mode == file_type::Interface;
