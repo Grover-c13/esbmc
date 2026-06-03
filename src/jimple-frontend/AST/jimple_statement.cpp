@@ -358,16 +358,25 @@ exprt jimple_invoke::to_exprt(
       abort();
     }
 
+    // Canonical intrinsic: unsigned int __ESBMC_spawn_thread(void (*)(void))
+    // (see pthread_lib.c). We declare it with an ellipsis argument list rather
+    // than a fixed function-pointer param: jimple static no-arg methods are
+    // registered as ellipsis functions (void run(...)), so address_of(run) is
+    // pointer-to-void(...), which would not match a fixed void(*)(void) param
+    // and would make goto-convert wrap the argument in a typecast. symex's
+    // intrinsic_spawn_thread requires operand[0] to be a *literal*
+    // address_of(symbol_expr(run)) (it asserts is_address_of2t after simplify),
+    // so any wrapping typecast breaks it. An ellipsis param keeps the argument
+    // a bare address_of and symex ignores the pointee type.
+    code_typet fn_type;
+    fn_type.return_type() = unsignedbv_typet(32);
+    fn_type.make_ellipsis();
+
     const irep_idt spawn_id = "c:@F@__ESBMC_spawn_thread";
     if (ctx.find_symbol(spawn_id) == nullptr)
     {
-      code_typet spawn_type;
-      spawn_type.return_type() = unsignedbv_typet(32);
-      code_typet::argumentt fn_arg;
-      fn_arg.type() = pointer_typet(empty_typet());
-      spawn_type.arguments().push_back(fn_arg);
       symbolt spawn_symbol = create_jimple_symbolt(
-        spawn_type, base_class, "__ESBMC_spawn_thread", spawn_id.as_string());
+        fn_type, base_class, "__ESBMC_spawn_thread", spawn_id.as_string());
       spawn_symbol.is_extern = true;
       ctx.move_symbol_to_context(spawn_symbol);
     }
@@ -381,6 +390,7 @@ exprt jimple_invoke::to_exprt(
     code_function_callt call;
     call.lhs() = symbol_expr(tid_added);
     call.function() = symbol_expr(*spawn_symbol);
+    call.type() = fn_type.return_type();
     call.arguments().push_back(address_of_exprt(symbol_expr(*target)));
     return call;
   }

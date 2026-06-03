@@ -88,3 +88,10 @@ jobs:
           set -e
           cat tj.log
           echo "=== esbmc exit code: $rc ==="
+          if [ "$rc" -ge 128 ]; then
+            echo "=== crashed (signal) — capturing gdb backtrace ==="
+            sudo apt-get install -y -q gdb >/dev/null 2>&1 || true
+            gdb -q -batch -ex 'run' -ex 'bt' --args \
+              "$ESBMC" jimple-threads-spike/thread.jimple \
+              --force-malloc-success --context-bound 2 2>&1 | tail -40 || true
+          fi
