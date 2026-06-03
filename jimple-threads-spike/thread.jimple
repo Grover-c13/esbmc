@@ -1,0 +1,67 @@
+{
+  "object": "Class",
+  "name": "T",
+  "modifiers": ["public", "final"],
+  "extends": "java.lang.Object",
+  "content": [
+    {
+      "object": "Field",
+      "name": "counter",
+      "modifiers": ["static"],
+      "type": {"identifier": "int", "dimensions": 0}
+    },
+    {
+      "object": "Method",
+      "name": "worker",
+      "modifiers": ["public", "static", "final"],
+      "type": {"identifier": "void", "dimensions": 0},
+      "parameters": [],
+      "content": [
+        {"object": "Variable", "name": "t0", "type": {"identifier": "int", "dimensions": 0}},
+        {"object": "SetVariable",
+         "lhs": {"expr_type": "symbol", "value": "t0"},
+         "rhs": {"expr_type": "static_member",
+                 "signature": {"base_class": "T", "member": "counter",
+                               "type": {"identifier": "int", "dimensions": 0}}}},
+        {"object": "SetVariable",
+         "lhs": {"expr_type": "static_member",
+                 "signature": {"base_class": "T", "member": "counter",
+                               "type": {"identifier": "int", "dimensions": 0}}},
+         "rhs": {"expr_type": "binop", "operator": "+",
+                 "lhs": {"expr_type": "symbol", "value": "t0"},
+                 "rhs": {"expr_type": "constant", "value": "1"}}},
+        {"object": "Return"}
+      ]
+    },
+    {
+      "object": "Method",
+      "name": "main",
+      "modifiers": ["public", "static", "final"],
+      "type": {"identifier": "void", "dimensions": 0},
+      "parameters": [],
+      "content": [
+        {"object": "Variable", "name": "c0", "type": {"identifier": "int", "dimensions": 0}},
+        {"object": "Variable", "name": "d0", "type": {"identifier": "int", "dimensions": 0}},
+        {"object": "Variable", "name": "z0", "type": {"identifier": "int", "dimensions": 0}},
+        {"object": "StaticInvoke", "base_class": "T", "method": "worker", "parameters": [], "spawn": true},
+        {"object": "StaticInvoke", "base_class": "T", "method": "worker", "parameters": [], "spawn": true},
+        {"object": "SetVariable",
+         "lhs": {"expr_type": "symbol", "value": "c0"},
+         "rhs": {"expr_type": "static_member",
+                 "signature": {"base_class": "T", "member": "counter",
+                               "type": {"identifier": "int", "dimensions": 0}}}},
+        {"object": "SetVariable",
+         "lhs": {"expr_type": "symbol", "value": "d0"},
+         "rhs": {"expr_type": "binop", "operator": "-",
+                 "lhs": {"expr_type": "symbol", "value": "c0"},
+                 "rhs": {"expr_type": "constant", "value": "1"}}},
+        {"object": "SetVariable",
+         "lhs": {"expr_type": "symbol", "value": "z0"},
+         "rhs": {"expr_type": "binop", "operator": "/",
+                 "lhs": {"expr_type": "constant", "value": "1"},
+                 "rhs": {"expr_type": "symbol", "value": "d0"}}},
+        {"object": "Return"}
+      ]
+    }
+  ]
+}

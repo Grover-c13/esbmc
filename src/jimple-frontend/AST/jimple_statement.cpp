@@ -3,6 +3,7 @@
 #include <util/std_types.h>
 #include <jimple-frontend/AST/jimple_statement.h>
 #include <util/arith_tools.h>
+#include <util/message.h>
 #include "util/c_typecast.h"
 
 void jimple_identity::from_json(const json &j)
@@ -331,6 +332,8 @@ void jimple_invoke::from_json(const json &j)
   {
     parameters.push_back(std::move(jimple_expr::get_expression(x)));
   }
+  if (j.contains("spawn"))
+    j.at("spawn").get_to(spawn);
   method += "_" + get_hash_name();
 }
 
@@ -339,6 +342,49 @@ exprt jimple_invoke::to_exprt(
   const std::string &class_name,
   const std::string &function_name) const
 {
+  // Thread.start() lowering: spawn a thread running base_class:method through the
+  // engine's __ESBMC_spawn_thread intrinsic. The intrinsic takes the address of a
+  // (no-arg) function symbol and runs its body as a new thread; the engine's POR /
+  // context-bounding then explores the interleavings. The address-of wrapping must
+  // happen here (the Jimple JSON cannot express a function pointer).
+  if (spawn)
+  {
+    std::ostringstream target_name;
+    target_name << base_class << ":" << method;
+    symbolt *target = ctx.find_symbol(target_name.str());
+    if (target == nullptr)
+    {
+      log_error("jimple spawn: target function {} not found", target_name.str());
+      abort();
+    }
+
+    const irep_idt spawn_id = "c:@F@__ESBMC_spawn_thread";
+    if (ctx.find_symbol(spawn_id) == nullptr)
+    {
+      code_typet spawn_type;
+      spawn_type.return_type() = unsignedbv_typet(32);
+      code_typet::argumentt fn_arg;
+      fn_arg.type() = pointer_typet(empty_typet());
+      spawn_type.arguments().push_back(fn_arg);
+      symbolt spawn_symbol = create_jimple_symbolt(
+        spawn_type, base_class, "__ESBMC_spawn_thread", spawn_id.as_string());
+      spawn_symbol.is_extern = true;
+      ctx.move_symbol_to_context(spawn_symbol);
+    }
+    symbolt *spawn_symbol = ctx.find_symbol(spawn_id);
+
+    // intrinsic_spawn_thread reads call.ret->type, so a return lvalue is required.
+    symbolt tid =
+      get_temp_symbol(unsignedbv_typet(32), base_class, function_name);
+    symbolt &tid_added = *ctx.move_symbol_to_context(tid);
+
+    code_function_callt call;
+    call.lhs() = symbol_expr(tid_added);
+    call.function() = symbol_expr(*spawn_symbol);
+    call.arguments().push_back(address_of_exprt(symbol_expr(*target)));
+    return call;
+  }
+
   // TODO: Move intrinsics to backend
   if (base_class == "kotlin.jvm.internal.Intrinsics")
   {

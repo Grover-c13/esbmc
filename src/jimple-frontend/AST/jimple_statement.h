@@ -56,6 +56,10 @@ public:
   std::string variable =
     ""; // TODO: Specialization jimple_invoke and jimple_virtual_invoke!!!
   std::vector<std::shared_ptr<jimple_expr>> parameters;
+  // When true, this invoke spawns a thread that runs base_class:method, via the
+  // engine's __ESBMC_spawn_thread intrinsic (Thread.start() lowering). The
+  // producer sets this and names the target run-function in base_class/method.
+  bool spawn = false;
 };
 
 /**
