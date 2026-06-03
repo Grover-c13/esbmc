@@ -16,7 +16,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # Cache the built binary keyed on the SOURCES. A fixture-only or
+      # workflow-only change leaves src/ unchanged -> exact key hit -> restore
+      # release/ and skip the entire build (deps+compile+link) and all the
+      # build-only caches below. Only a real source change misses and rebuilds.
+      # This is what makes fixture iterations ~1 min instead of ~6.
+      - name: Cache built esbmc binary
+        id: bincache
+        uses: actions/cache@v4
+        with:
+          path: release
+          key: esbmc-bin-${{ runner.os }}-${{ hashFiles('src/**', 'scripts/build.sh', 'scripts/cmake/**', 'CMakeLists.txt') }}
+
       - name: Cache GMP source tarball
+        if: steps.bincache.outputs.cache-hit != 'true'
         uses: actions/cache@v4
         with:
           path: |
@@ -29,6 +42,7 @@ jobs:
       # download+extract happens once; later runs reuse it (URL-hash stamps make
       # FetchContent skip the work). Keyed on the dependency URLs.
       - name: Cache prebuilt LLVM/solvers (FetchContent)
+        if: steps.bincache.outputs.cache-hit != 'true'
         uses: actions/cache@v4
         with:
           path: ~/esbmc-fc
@@ -38,25 +52,31 @@ jobs:
       # only a few jimple-frontend files, warm builds recompile just those +
       # relink, dropping the ~20-min cold build to a few minutes.
       - name: ccache
+        if: steps.bincache.outputs.cache-hit != 'true'
         uses: hendrikmuhs/ccache-action@v1.2
         with:
           key: esbmc-jimple-${{ runner.os }}
           max-size: 2G
 
       # Phase 1: configure deps. EXTRA_CMAKE_ARGS points FetchContent at the
-      # cached dir above (build.sh forwards it to cmake).
+      # cached dir above (build.sh forwards it to cmake). Skipped on a binary hit.
       - name: Configure (deps)
+        if: steps.bincache.outputs.cache-hit != 'true'
         run: |
+          sudo apt-get install -y -q lld >/dev/null 2>&1 || true
           export EXTRA_CMAKE_ARGS="-DFETCHCONTENT_BASE_DIR=$HOME/esbmc-fc"
           ./scripts/build.sh deps
 
-      # Phase 2: reconfigure for speed — route compiles through ccache and drop
-      # frontends/solvers this spike doesn't need (we only use Jimple + Z3).
-      - name: Trim build (ccache + minimal frontends/solvers)
+      # Phase 2: reconfigure for speed — ccache, the lld linker (the static link
+      # of LLVM+solvers dominates a source-change build), and drop frontends/
+      # solvers this spike doesn't need (we only use Jimple + Z3).
+      - name: Trim build (ccache + lld + minimal frontends/solvers)
+        if: steps.bincache.outputs.cache-hit != 'true'
         run: |
           cmake build \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache \
             -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+            -DCMAKE_EXE_LINKER_FLAGS=-fuse-ld=lld \
             -DENABLE_PYTHON_FRONTEND=Off \
             -DENABLE_SOLIDITY_FRONTEND=Off \
             -DENABLE_BOOLECTOR=Off \
@@ -68,6 +88,7 @@ jobs:
 
       # Phase 3: compile + install (cmake --build / --install, via build.sh).
       - name: Build + install ESBMC
+        if: steps.bincache.outputs.cache-hit != 'true'
         run: ./scripts/build.sh build install
 
       - name: Locate esbmc binary
