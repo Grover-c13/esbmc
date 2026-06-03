@@ -546,12 +546,25 @@ exprt jimple_static_member::to_exprt(
     return result;
   }
 
-  // TODO: Needs OOP members
+  // Static field: resolve the global symbol registered by jimple_file::to_exprt.
+  // Returning the symbol directly works for both reads and writes (assignment LHS).
+  {
+    std::string gid = from + "." + field;
+    symbolt *g = ctx.find_symbol(gid);
+    if (g != nullptr)
+      return symbol_expr(*g);
+  }
 
-  // 1. Look over the local scope
+  // TODO: Needs OOP members
+  // Fallback: an instance member accessed through a local of the same name.
   auto symbol_name = get_symbol_name(class_name, function_name, from);
-  symbolt &s = *ctx.find_symbol(symbol_name);
-  member_exprt op(symbol_expr(s), "tag-" + field, s.get_type());
+  symbolt *s = ctx.find_symbol(symbol_name);
+  if (s == nullptr)
+  {
+    log_error("jimple static_member: unresolved field {}.{}", from, field);
+    abort();
+  }
+  member_exprt op(symbol_expr(*s), "tag-" + field, s->get_type());
   exprt &base = op.struct_op();
   if (base.type().is_pointer())
   {

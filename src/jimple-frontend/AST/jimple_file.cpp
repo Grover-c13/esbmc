@@ -141,7 +141,8 @@ exprt jimple_file::to_exprt(contextt &ctx) const
   auto total_size = 0;
   for (auto const &field : body)
   {
-    if (std::dynamic_pointer_cast<jimple_class_field>(field))
+    auto cf = std::dynamic_pointer_cast<jimple_class_field>(field);
+    if (cf)
     {
       struct_typet::componentt comp;
       exprt &tmp = comp;
@@ -149,6 +150,23 @@ exprt jimple_file::to_exprt(contextt &ctx) const
       comp.swap(tmp);
       t.components().push_back(comp);
       total_size += std::stoi(comp.type().width().as_string());
+
+      // A static field is shared global state. Register a global symbol so
+      // jimple_static_member can read and write it (e.g. across threads).
+      // Instance fields stay as struct components above.
+      if (cf->modifiers.is_static())
+      {
+        typet ft = cf->type.to_typet(ctx);
+        std::string gid = name + "." + cf->name;
+        if (ctx.find_symbol(gid) == nullptr)
+        {
+          symbolt g = create_jimple_symbolt(ft, name, cf->name, gid);
+          g.lvalue = true;
+          g.static_lifetime = true;
+          g.value = gen_zero(ft);
+          ctx.move_symbol_to_context(g);
+        }
+      }
     }
   }
 
