@@ -163,7 +163,7 @@ exprt jimple_file::to_exprt(contextt &ctx) const
           symbolt g = create_jimple_symbolt(ft, name, cf->name, gid);
           g.lvalue = true;
           g.static_lifetime = true;
-          g.value = gen_zero(ft);
+          g.set_value(gen_zero(ft));
           ctx.move_symbol_to_context(g);
         }
       }
