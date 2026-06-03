@@ -436,6 +436,20 @@ exprt jimple_invoke::to_exprt(
     return skip;
   }
 
+  // Kotlin coroutine / stdlib runtime calls we model as no-ops in statement
+  // position: Result unwrapping, the single-state IllegalStateException guard,
+  // and any leftover kotlinx scheduling (the actual concurrency is introduced by
+  // the producer rewriting launch/runBlocking to __ESBMC_spawn_thread).
+  if (
+    base_class == "kotlin.ResultKt" ||
+    base_class == "java.lang.IllegalStateException" ||
+    base_class.rfind("kotlinx.coroutines", 0) == 0 ||
+    base_class.rfind("kotlin.coroutines", 0) == 0)
+  {
+    code_skipt skip;
+    return skip;
+  }
+
   code_blockt block;
   code_function_callt call;
 

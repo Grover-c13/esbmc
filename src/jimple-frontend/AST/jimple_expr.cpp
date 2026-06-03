@@ -546,6 +546,12 @@ exprt jimple_static_member::to_exprt(
     return result;
   }
 
+  // Coroutine / stdlib singletons we don't model (kotlin.Unit.INSTANCE,
+  // Dispatchers.Default, ...). A zero/opaque value suffices — the value is never
+  // used as real data once launch/runBlocking become __ESBMC_spawn_thread.
+  if (from == "kotlin.Unit" || from.rfind("kotlinx.coroutines", 0) == 0)
+    return result;
+
   // Static field: resolve the global symbol registered by jimple_file::to_exprt.
   // Returning the symbol directly works for both reads and writes (assignment LHS).
   {
