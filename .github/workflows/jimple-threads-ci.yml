@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
   push:
     branches: [jimple-threads]
-    paths: ['src/jimple-frontend/**', 'jimple-threads-spike/**', '.github/workflows/jimple-threads-ci.yml']
+    paths: ['src/jimple-frontend/**', 'src/goto-symex/**', 'jimple-threads-spike/**', '.github/workflows/jimple-threads-ci.yml']
 
 jobs:
   build-and-test:
