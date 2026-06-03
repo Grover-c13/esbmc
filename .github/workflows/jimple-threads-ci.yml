@@ -71,30 +71,35 @@ jobs:
         run: |
           "${{ steps.bin.outputs.esbmc }}" jimple-threads-spike/race.c --context-bound 2 | tail -3
 
-      # Regression gate: the patched Jimple frontend must spawn the two workers,
-      # explore the interleaving where counter==1, and trip the div-by-zero. A
-      # crash, a SUCCESSFUL verdict, or a different property all fail the job.
-      - name: Jimple thread test (expect VERIFICATION FAILED, division by zero)
+      # Regression gates. Each fixture must reach VERIFICATION FAILED with the
+      # division-by-zero property; a crash, a SUCCESSFUL verdict, or a different
+      # property fails the job. Covers: single-class thread race (thread), the
+      # multi-class linker (multiclass: A.main calls B.answer), and a real-shape
+      # 2-class thread program (mcthread: cross-class static field + instance
+      # run() spawned from another class).
+      - name: Jimple thread + multi-class gates (expect FAILED, division by zero)
         run: |
-          if [ ! -f jimple-threads-spike/thread.jimple ]; then
-            echo "no thread.jimple yet"; exit 0
-          fi
           ESBMC="${{ steps.bin.outputs.esbmc }}"
-          set +e
-          stdbuf -oL -eL "$ESBMC" jimple-threads-spike/thread.jimple \
-            --force-malloc-success --context-bound 2 > tj.log 2>&1
-          rc=$?
-          set -e
-          cat tj.log
-          echo "=== esbmc exit code: $rc ==="
-          if [ "$rc" -ge 128 ]; then
-            echo "FAIL: esbmc crashed (signal). Capturing gdb backtrace:"
-            sudo apt-get install -y -q gdb >/dev/null 2>&1 || true
-            gdb -q -batch -ex 'run' -ex 'bt' --args \
-              "$ESBMC" jimple-threads-spike/thread.jimple \
-              --force-malloc-success --context-bound 2 2>&1 | tail -40 || true
-            exit 1
-          fi
-          grep -q "VERIFICATION FAILED" tj.log || { echo "FAIL: expected VERIFICATION FAILED"; exit 1; }
-          grep -qi "division by zero" tj.log || { echo "FAIL: expected the division-by-zero property"; exit 1; }
-          echo "PASS: interleaving reached counter==1 -> division by zero"
+          fail=0
+          for f in thread multiclass mcthread; do
+            jf="jimple-threads-spike/$f.jimple"
+            [ -f "$jf" ] || { echo "skip: $jf absent"; continue; }
+            echo "==================== $f ===================="
+            set +e
+            stdbuf -oL -eL "$ESBMC" "$jf" --force-malloc-success --context-bound 2 > tj.log 2>&1
+            rc=$?
+            set -e
+            cat tj.log
+            echo "--- $f exit code: $rc ---"
+            if [ "$rc" -ge 128 ]; then
+              echo "FAIL[$f]: esbmc crashed (signal). gdb backtrace:"
+              sudo apt-get install -y -q gdb >/dev/null 2>&1 || true
+              gdb -q -batch -ex 'run' -ex 'bt' --args \
+                "$ESBMC" "$jf" --force-malloc-success --context-bound 2 2>&1 | tail -40 || true
+              fail=1; continue
+            fi
+            grep -q "VERIFICATION FAILED" tj.log || { echo "FAIL[$f]: expected VERIFICATION FAILED"; fail=1; continue; }
+            grep -qi "division by zero" tj.log || { echo "FAIL[$f]: expected division-by-zero property"; fail=1; continue; }
+            echo "PASS[$f]"
+          done
+          exit $fail

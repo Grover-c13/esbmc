@@ -1,0 +1,37 @@
+[
+  {
+    "object": "Class", "name": "A", "modifiers": ["public"], "extends": "java.lang.Object",
+    "content": [
+      {
+        "object": "Method", "name": "main", "modifiers": ["public", "static"],
+        "type": {"identifier": "void", "dimensions": 0}, "parameters": [],
+        "content": [
+          {"object": "Variable", "name": "c0", "type": {"identifier": "int", "dimensions": 0}},
+          {"object": "Variable", "name": "d0", "type": {"identifier": "int", "dimensions": 0}},
+          {"object": "Variable", "name": "z0", "type": {"identifier": "int", "dimensions": 0}},
+          {"object": "SetVariable", "lhs": {"expr_type": "symbol", "value": "c0"},
+           "rhs": {"expr_type": "static_invoke", "base_class": "B", "method": "answer", "parameters": []}},
+          {"object": "SetVariable", "lhs": {"expr_type": "symbol", "value": "d0"},
+           "rhs": {"expr_type": "binop", "operator": "-",
+                   "lhs": {"expr_type": "symbol", "value": "c0"},
+                   "rhs": {"expr_type": "constant", "value": "42"}}},
+          {"object": "SetVariable", "lhs": {"expr_type": "symbol", "value": "z0"},
+           "rhs": {"expr_type": "binop", "operator": "/",
+                   "lhs": {"expr_type": "constant", "value": "1"},
+                   "rhs": {"expr_type": "symbol", "value": "d0"}}},
+          {"object": "Return"}
+        ]
+      }
+    ]
+  },
+  {
+    "object": "Class", "name": "B", "modifiers": ["public"], "extends": "java.lang.Object",
+    "content": [
+      {
+        "object": "Method", "name": "answer", "modifiers": ["public", "static"],
+        "type": {"identifier": "int", "dimensions": 0}, "parameters": [],
+        "content": [{"object": "Return", "value": {"expr_type": "constant", "value": "42"}}]
+      }
+    ]
+  }
+]

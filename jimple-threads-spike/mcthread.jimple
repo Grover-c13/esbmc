@@ -1,0 +1,61 @@
+[
+  {
+    "object": "Class", "name": "Main", "modifiers": ["public"], "extends": "java.lang.Object",
+    "content": [
+      {
+        "object": "Field", "name": "counter", "modifiers": ["static"],
+        "type": {"identifier": "int", "dimensions": 0}
+      },
+      {
+        "object": "Method", "name": "main", "modifiers": ["public", "static"],
+        "type": {"identifier": "void", "dimensions": 0}, "parameters": [],
+        "content": [
+          {"object": "Variable", "name": "c0", "type": {"identifier": "int", "dimensions": 0}},
+          {"object": "Variable", "name": "d0", "type": {"identifier": "int", "dimensions": 0}},
+          {"object": "Variable", "name": "z0", "type": {"identifier": "int", "dimensions": 0}},
+          {"object": "StaticInvoke", "base_class": "Worker", "method": "run",
+           "variable": "w0", "parameters": [], "spawn": true},
+          {"object": "StaticInvoke", "base_class": "Worker", "method": "run",
+           "variable": "w1", "parameters": [], "spawn": true},
+          {"object": "SetVariable", "lhs": {"expr_type": "symbol", "value": "c0"},
+           "rhs": {"expr_type": "static_member",
+                   "signature": {"base_class": "Main", "member": "counter",
+                                 "type": {"identifier": "int", "dimensions": 0}}}},
+          {"object": "SetVariable", "lhs": {"expr_type": "symbol", "value": "d0"},
+           "rhs": {"expr_type": "binop", "operator": "-",
+                   "lhs": {"expr_type": "symbol", "value": "c0"},
+                   "rhs": {"expr_type": "constant", "value": "1"}}},
+          {"object": "SetVariable", "lhs": {"expr_type": "symbol", "value": "z0"},
+           "rhs": {"expr_type": "binop", "operator": "/",
+                   "lhs": {"expr_type": "constant", "value": "1"},
+                   "rhs": {"expr_type": "symbol", "value": "d0"}}},
+          {"object": "Return"}
+        ]
+      }
+    ]
+  },
+  {
+    "object": "Class", "name": "Worker", "modifiers": ["public"], "extends": "java.lang.Thread",
+    "content": [
+      {
+        "object": "Method", "name": "run", "modifiers": ["public"],
+        "type": {"identifier": "void", "dimensions": 0}, "parameters": [],
+        "content": [
+          {"object": "Variable", "name": "i0", "type": {"identifier": "int", "dimensions": 0}},
+          {"object": "SetVariable", "lhs": {"expr_type": "symbol", "value": "i0"},
+           "rhs": {"expr_type": "static_member",
+                   "signature": {"base_class": "Main", "member": "counter",
+                                 "type": {"identifier": "int", "dimensions": 0}}}},
+          {"object": "SetVariable",
+           "lhs": {"expr_type": "static_member",
+                   "signature": {"base_class": "Main", "member": "counter",
+                                 "type": {"identifier": "int", "dimensions": 0}}},
+           "rhs": {"expr_type": "binop", "operator": "+",
+                   "lhs": {"expr_type": "symbol", "value": "i0"},
+                   "rhs": {"expr_type": "constant", "value": "1"}}},
+          {"object": "Return"}
+        ]
+      }
+    ]
+  }
+]

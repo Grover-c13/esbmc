@@ -4,6 +4,8 @@
 #include <util/language.h>
 #include <jimple-frontend/AST/jimple_file.h>
 
+#include <vector>
+
 class jimple_languaget : public languaget
 {
 public:
@@ -46,5 +48,8 @@ public:
     return new jimple_languaget;
   }
 
-  jimple_file root;
+  // One entry per class. A single .jimple file holds one class; multiple files
+  // (or a top-level JSON array in one file) accumulate here and are all
+  // converted into the shared context, so multi-class programs link.
+  std::vector<jimple_file> roots;
 };
