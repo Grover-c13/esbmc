@@ -71,16 +71,15 @@ jobs:
         run: |
           "${{ steps.bin.outputs.esbmc }}" jimple-threads-spike/race.c --context-bound 2 | tail -3
 
-      - name: Jimple thread test (once present)
+      # Regression gate: the patched Jimple frontend must spawn the two workers,
+      # explore the interleaving where counter==1, and trip the div-by-zero. A
+      # crash, a SUCCESSFUL verdict, or a different property all fail the job.
+      - name: Jimple thread test (expect VERIFICATION FAILED, division by zero)
         run: |
           if [ ! -f jimple-threads-spike/thread.jimple ]; then
             echo "no thread.jimple yet"; exit 0
           fi
           ESBMC="${{ steps.bin.outputs.esbmc }}"
-          echo "=== GOTO for the lowered spawn (worker + main) ==="
-          "$ESBMC" jimple-threads-spike/thread.jimple --force-malloc-success \
-            --goto-functions-only 2>&1 | sed -n '/T:worker/,/^$/p;/T:main/,/^$/p' | head -60 || true
-          echo "=== running patched-frontend jimple thread test (full stdout+stderr) ==="
           set +e
           stdbuf -oL -eL "$ESBMC" jimple-threads-spike/thread.jimple \
             --force-malloc-success --context-bound 2 > tj.log 2>&1
@@ -89,9 +88,13 @@ jobs:
           cat tj.log
           echo "=== esbmc exit code: $rc ==="
           if [ "$rc" -ge 128 ]; then
-            echo "=== crashed (signal) — capturing gdb backtrace ==="
+            echo "FAIL: esbmc crashed (signal). Capturing gdb backtrace:"
             sudo apt-get install -y -q gdb >/dev/null 2>&1 || true
             gdb -q -batch -ex 'run' -ex 'bt' --args \
               "$ESBMC" jimple-threads-spike/thread.jimple \
               --force-malloc-success --context-bound 2 2>&1 | tail -40 || true
+            exit 1
           fi
+          grep -q "VERIFICATION FAILED" tj.log || { echo "FAIL: expected VERIFICATION FAILED"; exit 1; }
+          grep -qi "division by zero" tj.log || { echo "FAIL: expected the division-by-zero property"; exit 1; }
+          echo "PASS: interleaving reached counter==1 -> division by zero"
