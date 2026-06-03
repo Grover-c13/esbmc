@@ -141,18 +141,23 @@ jobs:
           done
           exit $fail
 
-      # WIP, non-gating: Kotlin coroutines (launch/runBlocking rewritten to spawn).
-      # The suspend state machine (label field + COROUTINE_SUSPENDED protocol) is
-      # not yet faithfully modelled, so this is informational until it converges.
-      - name: Coroutine (WIP, non-gating)
+      # Gate: concurrent Kotlin coroutines. Real kotlinx program (runBlocking {
+      # launch(Dispatchers.Default){counter++} x2; read counter }) -> the
+      # lost-update interleaving must trip the division by zero. runBlocking runs
+      # inline, launch -> __ESBMC_spawn_thread. Pointer/alignment checks are off:
+      # the continuation/scope objects are modelled as opaque, so their derefs are
+      # scaffolding artifacts, not the property under test.
+      - name: Coroutine gate (expect FAILED, division by zero)
         run: |
           jf="jimple-threads-spike/coroutine.jimple"
-          [ -f "$jf" ] || exit 0
+          [ -f "$jf" ] || { echo "no coroutine.jimple"; exit 0; }
           set +e
-          # Pointer/alignment checks are disabled: the continuation/scope objects
-          # are modelled as opaque, so their derefs are scaffolding artifacts, not
-          # the property under test (the counter race -> division by zero).
           "${{ steps.bin.outputs.esbmc }}" "$jf" --force-malloc-success \
-            --no-pointer-check --no-align-check --context-bound 4 2>&1 | tail -10
-          echo "(coroutine is WIP; not gating the build)"
-          exit 0
+            --no-pointer-check --no-align-check --context-bound 4 > co.log 2>&1
+          rc=$?
+          set -e
+          cat co.log
+          echo "--- coroutine exit code: $rc ---"
+          grep -q "VERIFICATION FAILED" co.log || { echo "FAIL: expected VERIFICATION FAILED"; exit 1; }
+          grep -qi "division by zero" co.log || { echo "FAIL: expected division-by-zero property"; exit 1; }
+          echo "PASS[coroutine]: concurrent launch{} lost-update race detected"
