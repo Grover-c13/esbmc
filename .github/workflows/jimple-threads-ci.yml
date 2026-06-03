@@ -97,7 +97,7 @@ jobs:
         run: |
           ESBMC="${{ steps.bin.outputs.esbmc }}"
           fail=0
-          for f in thread multiclass mcthread javathread; do
+          for f in thread multiclass mcthread javathread runnablethread; do
             jf="jimple-threads-spike/$f.jimple"
             [ -f "$jf" ] || { echo "skip: $jf absent"; continue; }
             echo "==================== $f ===================="
