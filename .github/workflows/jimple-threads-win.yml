@@ -1,0 +1,78 @@
+name: jimple-threads-win
+
+# Build the forked ESBMC (with the Jimple thread support) on Windows and prove the
+# thread + coroutine gates pass on a native Windows esbmc.exe, then publish it as an
+# artifact so the jvm-bmc wrapper can ship a Windows binary. Windows builds are slow
+# (~40 min) so this triggers only on engine changes, not fixture tweaks.
+on:
+  workflow_dispatch:
+  push:
+    branches: [jimple-threads]
+    paths:
+      - 'src/jimple-frontend/**'
+      - 'src/goto-symex/**'
+      - 'scripts/build.ps1'
+      - '.github/workflows/jimple-threads-win.yml'
+
+jobs:
+  build-and-test:
+    runs-on: windows-2022
+    steps:
+      - name: Make git use LF only
+        run: |
+          git config --system core.autocrlf false
+          git config --system core.eol lf
+
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Update vcpkg (pin known-good baseline)
+        run: |
+          cd C:/vcpkg
+          git fetch --tags
+          git checkout 2025.03.19
+          .\bootstrap-vcpkg.bat
+
+      # Builds with -DENABLE_JIMPLE_FRONTEND=On + DOWNLOAD_DEPENDENCIES (Windows
+      # LLVM/Z3) and installs to C:/deps/esbmc. The Jimple thread support is what
+      # we need here; python/solidity come along but are harmless.
+      - name: Build ESBMC (Jimple frontend)
+        run: ./scripts/build.ps1
+
+      - name: Upload esbmc.exe artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: esbmc-windows-jimple-threads
+          path: C:/deps/esbmc
+
+      # Same gates as the Linux CI, on the native Windows binary: every thread idiom
+      # must reach VERIFICATION FAILED (division by zero), and so must the coroutine
+      # race (pointer/align checks off — continuations are modelled opaque).
+      - name: Thread + coroutine gates (Windows)
+        shell: bash
+        run: |
+          ESBMC=$(find /c/deps/esbmc -name 'esbmc.exe' | head -1)
+          echo "esbmc: $ESBMC"; "$ESBMC" --version
+          fail=0
+          for f in thread multiclass mcthread javathread runnablethread kotlinlambda; do
+            jf="jimple-threads-spike/$f.jimple"
+            [ -f "$jf" ] || { echo "skip $f"; continue; }
+            "$ESBMC" "$jf" --force-malloc-success --context-bound 2 > tj.log 2>&1
+            if grep -q "VERIFICATION FAILED" tj.log && grep -qi "division by zero" tj.log; then
+              echo "PASS[$f]"
+            else
+              echo "FAIL[$f]"; tail -8 tj.log; fail=1
+            fi
+          done
+          "$ESBMC" jimple-threads-spike/coroutine.jimple --force-malloc-success \
+            --no-pointer-check --no-align-check --context-bound 4 > co.log 2>&1
+          if grep -q "VERIFICATION FAILED" co.log && grep -qi "division by zero" co.log; then
+            echo "PASS[coroutine]"
+          else
+            echo "FAIL[coroutine]"; tail -10 co.log; fail=1
+          fi
+          exit $fail
