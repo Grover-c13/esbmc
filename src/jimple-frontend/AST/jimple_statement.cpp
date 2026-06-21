@@ -448,12 +448,10 @@ exprt jimple_invoke::to_exprt(
     return skip;
   }
 
-  // Don't care for Random
-  if (base_class == "java.lang.String")
-  {
-    code_skipt skip;
-    return skip;
-  }
+  // java.lang.String calls are NOT skipped: they dispatch to the char-array
+  // String MODEL's methods (the producer puts the model on the classpath and
+  // emits it). A missing model method then fails loudly via require_symbol
+  // below rather than being silently dropped.
 
   if (base_class == "java.lang.AssertionError")
   {

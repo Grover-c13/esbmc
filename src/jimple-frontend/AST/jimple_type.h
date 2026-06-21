@@ -68,7 +68,11 @@ private:
     {"java.util.Random",
      BASE_TYPES::
        INT}, // We dont really care about the initialization of this mode
-    {"java.lang.String", BASE_TYPES::INT}, // TODO: handle this properly
+    // java.lang.String is NOT a primitive: it resolves to the char-array String
+    // MODEL struct (a reference type) like any other class, so the model's char[]
+    // value field and methods bind. Falling through to BASE_TYPES::OTHER makes
+    // get_base_type return pointer_typet(tag-java.lang.String) when the model is
+    // on the classpath (and an opaque pointer when it is not - never INT).
     /* TODO: these are hacks and should be moved into an intrinsics class */
     {"Main", BASE_TYPES::INT},                     // TODO: handle this properly
     {"java.lang.AssertionError", BASE_TYPES::INT}, // TODO: handle this properly
