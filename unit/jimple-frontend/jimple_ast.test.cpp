@@ -153,11 +153,23 @@ SCENARIO("AST initialization from JSON (statements)", "[jimple-frontend]")
 
   GIVEN("An assertion statement")
   {
+    // The native assert lowering parses an "expression" (a boolean condition)
+    // into `cond`, which to_exprt turns into a code_assertt. (The old shape
+    // carried `value`/`variable` string fields; those were removed.)
     std::istringstream file(R"json({
-    "object": "Assert",
-    "equals": {"value" : "42",
-               "symbol": "x"
-              }
+    "object": "Assertion",
+    "expression": {
+            "expr_type": "binop",
+            "operator": "<=",
+            "lhs": {
+                    "expr_type": "symbol",
+                    "value": "x"
+                    },
+            "rhs": {
+                    "expr_type": "constant",
+                    "value": "42"
+                    }
+            }
 })json");
     nlohmann::json j;
     file >> j;
@@ -165,10 +177,7 @@ SCENARIO("AST initialization from JSON (statements)", "[jimple-frontend]")
     jimple_assertion f;
     j.get_to(f);
 
-    REQUIRE(f.value == "42");
-    REQUIRE_FALSE(f.value == "15");
-    REQUIRE(f.variable == "x");
-    REQUIRE_FALSE(f.variable == "y");
+    REQUIRE(f.cond != nullptr);
   }
 
   GIVEN("An invoke statement")
