@@ -26,7 +26,7 @@ exprt jimple_constant::to_exprt(
   {
     const typet char_t = unsignedbv_typet(16);
     const std::size_t n = value.size() + 1; // + NUL terminator
-    array_typet arr_t(char_t, from_integer(n, size_type()));
+    array_typet arr_t(char_t, from_integer(BigInt(n), size_type()));
 
     exprt arr = gen_zero(arr_t);
     for (std::size_t i = 0; i < value.size(); i++)
