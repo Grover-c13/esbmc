@@ -2,8 +2,15 @@ name: jimple-threads-win
 
 # Build the forked ESBMC (with the Jimple thread support) on Windows and prove the
 # thread + coroutine gates pass on a native Windows esbmc.exe, then publish it as an
-# artifact so the jvm-bmc wrapper can ship a Windows binary. Windows builds are slow
-# (~40 min) so this triggers only on engine changes, not fixture tweaks.
+# artifact so the jvm-bmc wrapper can ship a Windows binary.
+#
+# Windows cold builds are ~46 min because every run re-bootstraps vcpkg, re-downloads
+# +extracts ~1.5 GB of LLVM/Z3, and fully recompiles esbmc. This workflow caches all
+# three so warm builds are a few minutes (only the touched frontend files recompile):
+#   1. Built binary  keyed on the SOURCES  -> exact hit skips the WHOLE build.
+#   2. vcpkg downloads + binary cache       -> bootstrap/dep build reused.
+#   3. LLVM/Z3 (build/LLVM, build/Z3)       -> the ~1.5 GB fetch happens once.
+#   4. sccache                              -> per-file object cache (frontend win).
 on:
   workflow_dispatch:
   push:
@@ -13,6 +20,11 @@ on:
       - 'src/goto-symex/**'
       - 'scripts/build.ps1'
       - '.github/workflows/jimple-threads-win.yml'
+
+env:
+  # vcpkg writes built-package archives here; cached so the dep build is reused.
+  VCPKG_DEFAULT_BINARY_CACHE: C:/vcpkg-bincache
+  SCCACHE_GHA_ENABLED: "true"
 
 jobs:
   build-and-test:
@@ -30,18 +42,85 @@ jobs:
         with:
           python-version: '3.11'
 
+      # 1. Built binary keyed on the SOURCES + build script. A workflow- or
+      #    fixture-only change leaves these unchanged -> exact key hit -> restore
+      #    C:/deps/esbmc and skip the entire build (vcpkg + deps + compile + link)
+      #    and every build-only cache/step below.
+      - name: Cache built esbmc binary
+        id: bincache
+        uses: actions/cache@v4
+        with:
+          path: C:/deps/esbmc
+          key: esbmc-bin-${{ runner.os }}-${{ hashFiles('src/**', 'scripts/build.ps1', 'scripts/cmake/**', 'CMakeLists.txt') }}
+
+      # 2. vcpkg: cache the source downloads AND the binary (built-package) cache.
+      #    Keyed so a vcpkg baseline bump or new dep invalidates it.
+      - name: Cache vcpkg (downloads + binary cache)
+        if: steps.bincache.outputs.cache-hit != 'true'
+        uses: actions/cache@v4
+        with:
+          path: |
+            C:/vcpkg/downloads
+            C:/vcpkg-bincache
+          key: esbmc-vcpkg-${{ runner.os }}-2025.03.19-v1
+
+      # 3. The big one: prebuilt LLVM/Z3. DOWNLOAD_DEPENDENCIES downloads+extracts
+      #    these into the build dir (build/LLVM(.zip), build/Z3(.zip)); the cmake
+      #    download_zip_and_extract() helper skips both download and extract when
+      #    the files already EXIST. Restore them before the build so the ~1.5 GB
+      #    fetch happens once. Keyed on the dep URLs/names in Options.cmake.
+      - name: Cache prebuilt LLVM/Z3
+        if: steps.bincache.outputs.cache-hit != 'true'
+        uses: actions/cache@v4
+        with:
+          path: |
+            build/LLVM
+            build/LLVM.zip
+            build/Z3
+            build/Z3.zip
+          key: esbmc-fc-${{ runner.os }}-${{ hashFiles('scripts/cmake/Options.cmake', 'scripts/cmake/SetupLocalLLVM.cmake', 'src/solvers/z3/CMakeLists.txt') }}
+
+      # 4. sccache: object-file cache across runs (MSVC-compatible). Wired into the
+      #    build via CMAKE_<LANG>_COMPILER_LAUNCHER (see the Build step). A frontend
+      #    iteration recompiles only the touched files + relinks.
+      - name: Setup sccache
+        if: steps.bincache.outputs.cache-hit != 'true'
+        uses: mozilla-actions/sccache-action@v0.0.6
+
+      # The Ninja generator (needed for the sccache launcher) does NOT set up the
+      # MSVC environment the way the Visual Studio generator does — cl.exe and ninja
+      # must be on PATH. This activates the x64 Developer environment (cl, link,
+      # ninja) for the build step.
+      - name: Set up MSVC environment (x64)
+        if: steps.bincache.outputs.cache-hit != 'true'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+
       - name: Update vcpkg (pin known-good baseline)
+        if: steps.bincache.outputs.cache-hit != 'true'
         run: |
+          New-Item -ItemType Directory -Force -Path C:/vcpkg-bincache | Out-Null
           cd C:/vcpkg
           git fetch --tags
           git checkout 2025.03.19
           .\bootstrap-vcpkg.bat
 
-      # Builds with -DENABLE_JIMPLE_FRONTEND=On + DOWNLOAD_DEPENDENCIES (Windows
-      # LLVM/Z3) and installs to C:/deps/esbmc. The Jimple thread support is what
-      # we need here; python/solidity come along but are harmless.
+      # Builds with -DENABLE_JIMPLE_FRONTEND=On + DOWNLOAD_DEPENDENCIES (cached
+      # LLVM/Z3) and installs to C:/deps/esbmc. ESBMC_USE_NINJA makes build.ps1 use
+      # the Ninja generator so the sccache launcher is honoured (the Visual Studio
+      # generator ignores CMAKE_<LANG>_COMPILER_LAUNCHER). build.ps1 forces embedded
+      # (/Z7) debug info under Ninja so sccache can cache the objects.
       - name: Build ESBMC (Jimple frontend)
+        if: steps.bincache.outputs.cache-hit != 'true'
+        env:
+          ESBMC_USE_NINJA: '1'
+          ESBMC_EXTRA_CMAKE_ARGS: '-DCMAKE_C_COMPILER_LAUNCHER=sccache -DCMAKE_CXX_COMPILER_LAUNCHER=sccache'
         run: ./scripts/build.ps1
+
+      - name: sccache stats
+        if: steps.bincache.outputs.cache-hit != 'true'
+        run: sccache --show-stats
 
       - name: Upload esbmc.exe artifact
         uses: actions/upload-artifact@v4
