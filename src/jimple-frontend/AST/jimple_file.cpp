@@ -54,7 +54,7 @@ void jimple_file::from_json(const json &j)
   if (j.contains("extends"))
     j.at("extends").get_to(this->extends);
   else
-    this->implements = "(No extends)";
+    this->extends = "(No extends)";
 
   modifiers = j.at("modifiers").get<jimple_modifiers>();
 

@@ -17,6 +17,27 @@ exprt jimple_constant::to_exprt(
   const std::string &,
   const std::string &) const
 {
+  // String literal: build a UTF-16 char[] array constant from the literal's
+  // characters so length/charAt resolve to concrete values. Java `char` is an
+  // unsigned 16-bit code unit (matches BASE_TYPES::CHAR in jimple_type). For an
+  // ASCII/Latin-1 literal each source byte is one code unit; a trailing NUL is
+  // appended so the layout matches a C-style string constant.
+  if (is_string)
+  {
+    const typet char_t = unsignedbv_typet(16);
+    const std::size_t n = value.size() + 1; // + NUL terminator
+    array_typet arr_t(char_t, from_integer(n, size_type()));
+
+    exprt arr = gen_zero(arr_t);
+    for (std::size_t i = 0; i < value.size(); i++)
+    {
+      unsigned char ch = static_cast<unsigned char>(value[i]);
+      arr.operands().at(i) = from_integer(BigInt(ch), char_t);
+    }
+    // operands().at(value.size()) stays the zero terminator from gen_zero.
+    return arr;
+  }
+
   // A null reference constant (e.g. an optional coroutine/Continuation arg).
   if (value == "null")
     return gen_zero(pointer_typet(empty_typet()));
@@ -75,7 +96,12 @@ std::shared_ptr<jimple_expr> jimple_expr::get_expression(const json &j)
 
   if (expr_type == "string_constant")
   {
+    // The literal's characters live in "value". Earlier code default-constructed
+    // the constant and never read them, so every string literal silently became
+    // an empty/zero value. Materialize the chars as a UTF-16 char[] constant.
     jimple_constant c;
+    c.from_json(j);
+    c.set_is_string(true);
     return std::make_shared<jimple_constant>(c);
   }
 
@@ -508,6 +534,16 @@ exprt jimple_deref::to_exprt(
   auto arr = base->to_exprt(ctx, class_name, function_name);
   auto i = index->to_exprt(ctx, class_name, function_name);
   auto index = index_exprt(arr, i, arr.type().subtype());
+
+  // A materialized string literal (or any other array *value*) is indexed
+  // directly: it is an in-place array constant, not a heap pointer, so the
+  // pointer-arithmetic dereference below would be ill-typed. Plain array
+  // indexing folds to the concrete char for a constant literal + index.
+  if (arr.type().is_array())
+    return index;
+
+  // Jimple arrays are heap pointers (see jimple_type::get_arr_type); model the
+  // access as pointer arithmetic + dereference.
   exprt &array_expr = index.op0();
 
   exprt addition("+", array_expr.type());

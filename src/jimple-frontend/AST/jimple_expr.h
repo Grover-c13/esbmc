@@ -62,12 +62,22 @@ public:
   {
     value = v;
   }
+
+  // Mark this constant as a Java string literal (its `value` is the literal's
+  // characters, not a number). String literals materialize to a UTF-16 char[]
+  // array constant so length/charAt can be evaluated over them.
+  void set_is_string(bool b)
+  {
+    is_string = b;
+  }
+
   virtual exprt to_exprt(
     contextt &ctx,
     const std::string &class_name,
     const std::string &function_name) const override;
 
   std::string value;
+  bool is_string = false;
 };
 
 /**

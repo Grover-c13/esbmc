@@ -112,9 +112,27 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: esbmc-linux-jimple-primitives
+          name: esbmc-linux-jimple-strings
           path: release/bin/esbmc
           if-no-files-found: warn
+
+      # String-constant materialization gate. A string literal must now carry its
+      # actual characters as a UTF-16 char[] constant. string-charat-true reads
+      # 'A'[0] (==65) and divides 100/65 -> no division by zero -> SUCCESSFUL.
+      # string-charat-false divides 100/('A'[0]-65) == 100/0 -> FAILED. Both pin
+      # the char to its EXACT value, so a dropped/zeroed literal (stock 8.3.0
+      # behaviour) fails the gate.
+      - name: String-constant materialization gate (charAt over a literal)
+        run: |
+          ESBMC="${{ steps.bin.outputs.esbmc }}"
+          "$ESBMC" regression/jimple/string-charat-true/main.jimple --force-malloc-success > st.log 2>&1 || true
+          cat st.log | tail -8
+          grep -q "VERIFICATION SUCCESSFUL" st.log || { echo "FAIL: string-charat-true expected SUCCESSFUL ('A'[0] must materialize to 65)"; exit 1; }
+          "$ESBMC" regression/jimple/string-charat-false/main.jimple --force-malloc-success > sf.log 2>&1 || true
+          cat sf.log | tail -8
+          grep -q "VERIFICATION FAILED" sf.log || { echo "FAIL: string-charat-false expected FAILED (100/('A'[0]-65) is div-by-zero)"; exit 1; }
+          grep -qi "division by zero" sf.log || { echo "FAIL: string-charat-false expected division-by-zero property"; exit 1; }
+          echo "PASS: string literals materialize their exact characters"
 
       - name: Sanity — jimple fixture (expect VERIFICATION FAILED)
         run: |
