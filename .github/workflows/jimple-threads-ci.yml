@@ -98,6 +98,24 @@ jobs:
           echo "esbmc=$ESBMC" >> "$GITHUB_OUTPUT"
           "$ESBMC" --version
 
+      # Diagnostic: dump the GOTO for the long-mul fixture so we can see the
+      # exact types/widths the multiply and its operands carry.
+      - name: Diagnose long-mul GOTO + types
+        run: |
+          ESBMC="${{ steps.bin.outputs.esbmc }}"
+          echo "===== goto-functions-only ====="
+          "$ESBMC" regression/jimple/long-mul-true/main.jimple --force-malloc-success --goto-functions-only 2>&1 | sed -n '1,120p' || true
+          echo "===== verbose verify ====="
+          "$ESBMC" regression/jimple/long-mul-true/main.jimple --force-malloc-success 2>&1 | tail -25 || true
+
+      - name: Upload built esbmc binary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: esbmc-linux-jimple-primitives
+          path: release/bin/esbmc
+          if-no-files-found: warn
+
       - name: Sanity — jimple fixture (expect VERIFICATION FAILED)
         run: |
           "${{ steps.bin.outputs.esbmc }}" regression/jimple/kt-array-false/main.jimple --force-malloc-success | tail -3
