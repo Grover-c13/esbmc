@@ -5,6 +5,7 @@
 #include <util/expr_util.h>
 #include <util/std_code.h>
 #include <util/std_expr.h>
+#include <util/std_types.h>
 
 void jimple_constant::from_json(const json &j)
 {
@@ -19,9 +20,15 @@ exprt jimple_constant::to_exprt(
   // A null reference constant (e.g. an optional coroutine/Continuation arg).
   if (value == "null")
     return gen_zero(pointer_typet(empty_typet()));
-  auto as_number = std::stoi(value);
-  return constant_exprt(
-    integer2binary(as_number, 10), integer2string(as_number), int_type());
+
+  // Integer literal. Parse as 64-bit so long constants (> 2^31) don't overflow,
+  // and let from_integer encode the value at the type's full width. The
+  // assignment/binop typecasts narrow it to the destination width where needed.
+  // The previous code passed 10 as the integer2binary *width* argument (it is a
+  // bit width, not a base), so any value >= 2^10 was silently truncated -- e.g.
+  // 65536 was encoded as 0, corrupting every large constant.
+  BigInt as_number(std::stoll(value));
+  return from_integer(as_number, signedbv_typet(64));
 };
 
 void jimple_symbol::from_json(const json &j)
