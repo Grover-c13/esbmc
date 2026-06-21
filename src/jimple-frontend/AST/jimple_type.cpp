@@ -42,7 +42,11 @@ typet jimple_type::get_base_type(const contextt &ctx) const
     return build_float_type(64);
 
   case BASE_TYPES::BOOLEAN:
-    return bool_type();
+    // Jimple/Soot lowers boolean to an integer (0/1): the producer emits
+    // `z = 1` / `if z == 0 ...` with int constants. Keep it a 32-bit int so
+    // those mixed boolean/int comparisons stay well-typed. (Switching to a
+    // true bool_type() here would need typecasts threaded through If/binop.)
+    return signedbv_typet(32);
 
   case BASE_TYPES::_VOID:
     return empty_typet();
