@@ -64,7 +64,12 @@ private:
     {"double", BASE_TYPES::DOUBLE},
     {"void", BASE_TYPES::_VOID},
     /* Basic Java classes that can work as primitive types */
-    {"java.lang.Integer", BASE_TYPES::INT},
+    // java.lang.Integer is NOT a primitive: it is a REFERENCE (boxed). Collapsing it to int type-puns
+    // a 32-bit value into the pointer slot of a reference container (the collection models' Object[]),
+    // so reads come back nondet and every List<Integer>/Map proof goes UNKNOWN. Leaving it OUT of the
+    // map routes it to BASE_TYPES::OTHER -> get_base_type returns an (Object-like) pointer; the boxing
+    // surface valueOf/intValue is handled as a tagged-pointer cast in jimple_expr.cpp so the int rides
+    // in the pointer bits and round-trips type-correctly through the Object[].
     {"java.util.Random",
      BASE_TYPES::
        INT}, // We dont really care about the initialization of this mode

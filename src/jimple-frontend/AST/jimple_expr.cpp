@@ -332,10 +332,15 @@ exprt jimple_expr_invoke::to_exprt(
     return skip;
   }
 
-  // TODO: Move intrinsics to backend
+  // Autoboxing: Integer.valueOf(int) returns a BOXED reference. Represent the box as a tagged pointer
+  // carrying the int in its bits (typecast int -> pointer), so it sits in an Object[] type-correctly
+  // and round-trips; Integer.intValue() casts it back (below). This replaces collapsing it to the raw
+  // int, which type-punned a 32-bit value into a pointer slot and read back nondet.
   if (base_class == "java.lang.Integer" && method == "valueOf_1")
-    // This would be called with valueOf(2), valueOf(42), etc...
-    return parameters[0]->to_exprt(ctx, class_name, function_name);
+  {
+    exprt v = parameters[0]->to_exprt(ctx, class_name, function_name);
+    return typecast_exprt(v, pointer_typet(empty_typet()));
+  }
 
   if (is_nondet_call())
   {
@@ -414,6 +419,15 @@ exprt jimple_virtual_invoke::to_exprt(
   {
     code_skipt skip;
     return skip;
+  }
+
+  // Auto-UNBOXING: Integer.intValue() reads the boxed int back out of the tagged pointer that
+  // Integer.valueOf produced (jimple_expr_invoke::to_exprt). Cast the receiver reference -> 32-bit int.
+  if (base_class == "java.lang.Integer" && method == "intValue_1")
+  {
+    exprt recv =
+      jimple_symbol(variable).to_exprt(ctx, class_name, function_name);
+    return typecast_exprt(recv, signedbv_typet(32));
   }
 
   if (is_nondet_call())
