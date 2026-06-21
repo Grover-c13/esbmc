@@ -151,7 +151,7 @@ jobs:
             jf="regression/jimple/$name/main.jimple"
             echo "==================== $name (expect $expect) ===================="
             set +e
-            "$ESBMC" "$jf" --force-malloc-success > aa.log 2>&1
+            "$ESBMC" "$jf" --force-malloc-success --z3 > aa.log 2>&1
             rc=$?
             set -e
             tail -6 aa.log
