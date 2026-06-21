@@ -154,6 +154,20 @@ void jimple_full_method_body::from_json(const json &stmts)
       to_add = std::make_shared<jimple_if>(s);
       break;
     }
+    case statement::Assertion:
+    {
+      jimple_assertion s;
+      stmt.get_to(s);
+      to_add = std::make_shared<jimple_assertion>(s);
+      break;
+    }
+    case statement::Assume:
+    {
+      jimple_assume s;
+      stmt.get_to(s);
+      to_add = std::make_shared<jimple_assume>(s);
+      break;
+    }
     default:
       log_error(
         "unsupported jimple statement id {} for key '{}'",

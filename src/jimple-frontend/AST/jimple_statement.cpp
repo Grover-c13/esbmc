@@ -3,6 +3,7 @@
 #include <util/std_types.h>
 #include <jimple-frontend/AST/jimple_statement.h>
 #include <util/arith_tools.h>
+#include <util/expr_util.h>
 #include <util/message.h>
 #include "util/c_typecast.h"
 
@@ -267,17 +268,28 @@ exprt jimple_if::to_exprt(
   return if_expr;
 }
 
+// Coerce a Jimple condition expression to a boolean. Comparison binops already
+// produce a bool-typed expr; a bare integer condition (Soot lowers booleans to
+// int 0/1) becomes `cond != 0`.
+static exprt jimple_cond_to_bool(exprt cond)
+{
+  if (cond.type().is_bool())
+    return cond;
+
+  exprt zero = gen_zero(cond.type());
+  return binary_relation_exprt(cond, "notequal", zero);
+}
+
 std::string jimple_assertion::to_string() const
 {
   std::ostringstream oss;
-  oss << "Assertion: " << variable << " = " << value;
+  oss << "Assertion: " << cond->to_string();
   return oss.str();
 }
 
 void jimple_assertion::from_json(const json &j)
 {
-  j.at("equals").at("symbol").get_to(variable);
-  j.at("equals").at("value").get_to(value);
+  cond = jimple_expr::get_expression(j.at("expression"));
 }
 
 exprt jimple_assertion::to_exprt(
@@ -285,34 +297,31 @@ exprt jimple_assertion::to_exprt(
   const std::string &class_name,
   const std::string &function_name) const
 {
-  code_function_callt call;
+  exprt condition =
+    jimple_cond_to_bool(cond->to_exprt(ctx, class_name, function_name));
+  return code_assertt(condition);
+}
 
+std::string jimple_assume::to_string() const
+{
   std::ostringstream oss;
-  oss << class_name << ":" << function_name << "@" << variable;
+  oss << "Assume: " << cond->to_string();
+  return oss.str();
+}
 
-  // TODO: move this from here
-  std::string id, name;
-  id = "__ESBMC_assert";
-  name = "__ESBMC_assert";
+void jimple_assume::from_json(const json &j)
+{
+  cond = jimple_expr::get_expression(j.at("expression"));
+}
 
-  auto symbol =
-    create_jimple_symbolt(code_typet(), class_name, name, id, function_name);
-
-  symbolt &added_symbol = *ctx.move_symbol_to_context(symbol);
-
-  call.function() = symbol_expr(added_symbol);
-
-  symbolt &test = *ctx.find_symbol(oss.str());
-  int as_number = std::stoi(value);
-  exprt value_operand = from_integer(as_number, int_type());
-
-  equality_exprt ge(symbol_expr(test), value_operand);
-  not_exprt qwe(ge);
-  call.arguments().push_back(qwe);
-
-  array_of_exprt arr;
-  // TODO: Create binop operation between symbol and value
-  return call;
+exprt jimple_assume::to_exprt(
+  contextt &ctx,
+  const std::string &class_name,
+  const std::string &function_name) const
+{
+  exprt condition =
+    jimple_cond_to_bool(cond->to_exprt(ctx, class_name, function_name));
+  return code_assumet(condition);
 }
 
 std::string jimple_invoke::to_string() const

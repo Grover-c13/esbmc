@@ -73,6 +73,8 @@ public:
     If,            // if <expr> goto <Label>
     Declaration,   // int a;
     Throw,         // throw <expr>
+    Assertion,     // assert <expr>  (checked property -> GOTO ASSERT)
+    Assume,        // assume <expr>  (domain assumption -> GOTO ASSUME)
     Location       // Extra, reffers to the line number
   };
 
@@ -91,6 +93,8 @@ private:
     {"SetVariable", statement::Assignment},
     {"If", statement::If},
     {"Throw", statement::Throw},
+    {"Assertion", statement::Assertion},
+    {"Assume", statement::Assume},
     {"Location", statement::Location}};
 
   std::map<statement, std::string> to_map = {
@@ -105,6 +109,8 @@ private:
     {statement::If, "If"},
     {statement::Declaration, "Declaration"},
     {statement::Throw, "Throw"},
+    {statement::Assertion, "Assertion"},
+    {statement::Assume, "Assume"},
     {statement::Location, "Location"}};
 };
 

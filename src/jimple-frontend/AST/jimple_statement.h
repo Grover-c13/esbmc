@@ -136,7 +136,15 @@ public:
   bool is_skip = false;
 };
 
-// For debug
+/**
+ * @brief A checked assertion
+ *
+ * Lowers an "Assertion" statement (a boolean condition) to a GOTO ASSERT
+ * (code_assertt). The engine then checks the condition holds on every path
+ * for every input. This is the real property primitive: an assert that fails
+ * makes the proof FAIL. The JSON shape mirrors jimple_if: an "expression"
+ * field holding the boolean condition to assert.
+ */
 class jimple_assertion : public jimple_statement
 {
 public:
@@ -147,8 +155,29 @@ public:
   virtual std::string to_string() const override;
   virtual void from_json(const json &j) override;
 
-  std::string variable;
-  std::string value;
+  std::shared_ptr<jimple_expr> cond;
+};
+
+/**
+ * @brief A domain assumption
+ *
+ * Lowers an "Assume" statement (a boolean condition) to a GOTO ASSUME
+ * (code_assumet). The engine prunes every path on which the condition is
+ * false, without over-pruning the paths on which it holds. The JSON shape
+ * mirrors jimple_if / jimple_assertion: an "expression" field holding the
+ * boolean condition to assume.
+ */
+class jimple_assume : public jimple_statement
+{
+public:
+  virtual exprt to_exprt(
+    contextt &ctx,
+    const std::string &class_name,
+    const std::string &function_name) const override;
+  virtual std::string to_string() const override;
+  virtual void from_json(const json &j) override;
+
+  std::shared_ptr<jimple_expr> cond;
 };
 
 /**
