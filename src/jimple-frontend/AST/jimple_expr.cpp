@@ -188,11 +188,26 @@ exprt jimple_binop::to_exprt(
   const std::string &function_name) const
 {
   auto lhs_expr = lhs->to_exprt(ctx, class_name, function_name);
-  return gen_binary(
-    binop,
-    lhs_expr.type(),
-    lhs_expr,
-    rhs->to_exprt(ctx, class_name, function_name));
+  auto rhs_expr = rhs->to_exprt(ctx, class_name, function_name);
+
+  // Coerce the operands to a common type. Integer literals are encoded 64-bit
+  // (see jimple_constant) while locals carry their declared width, so a binop
+  // mixing a local with a literal (e.g. `intLocal >= 0`) would otherwise build
+  // an expression over mismatched bitvector widths and the solver rejects it.
+  if (lhs_expr.type() != rhs_expr.type())
+  {
+    c_typecastt c_typecast(ctx);
+    c_typecast.implicit_typecast(rhs_expr, lhs_expr.type());
+  }
+
+  // Relational operators yield a boolean; arithmetic operators yield the
+  // (now common) operand type. The solver requires the relation node itself to
+  // carry bool, otherwise an assert/assume over the result mismatches sorts.
+  bool is_relational = binop == "=" || binop == "notequal" || binop == "<" ||
+                       binop == "<=" || binop == ">" || binop == ">=";
+  typet result_type = is_relational ? typet("bool") : lhs_expr.type();
+
+  return gen_binary(binop, result_type, lhs_expr, rhs_expr);
 };
 
 void jimple_cast::from_json(const json &j)
