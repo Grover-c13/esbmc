@@ -39,22 +39,29 @@ protected:
 private:
   enum class BASE_TYPES
   {
-    INT,
-    BOOLEAN,
+    INT,     // 32-bit signed   (Java int)
+    LONG,    // 64-bit signed   (Java long)
+    SHORT,   // 16-bit signed   (Java short)
+    BYTE,    // 8-bit signed    (Java byte)
+    CHAR,    // 16-bit unsigned (Java char)
+    BOOLEAN, // boolean
+    FLOAT,   // IEEE 754 single (Java float)
+    DOUBLE,  // IEEE 754 double (Java double)
     _VOID,
     OTHER
   };
   BASE_TYPES bt;
   std::map<std::string, BASE_TYPES> from_map = {
-    /* Basic JVM types  */
+    /* Basic JVM types - widths fixed by the JVM spec (JLS sec. 4.2), not by
+       the host platform, so map each to an explicit-width ESBMC type. */
     {"int", BASE_TYPES::INT},
-    {"byte", BASE_TYPES::INT},
-    {"char", BASE_TYPES::INT},
-    {"short", BASE_TYPES::INT},
-    {"boolean", BASE_TYPES::INT},
-    {"long", BASE_TYPES::INT},
-    {"float", BASE_TYPES::INT},
-    {"double", BASE_TYPES::INT},
+    {"byte", BASE_TYPES::BYTE},
+    {"char", BASE_TYPES::CHAR},
+    {"short", BASE_TYPES::SHORT},
+    {"boolean", BASE_TYPES::BOOLEAN},
+    {"long", BASE_TYPES::LONG},
+    {"float", BASE_TYPES::FLOAT},
+    {"double", BASE_TYPES::DOUBLE},
     {"void", BASE_TYPES::_VOID},
     /* Basic Java classes that can work as primitive types */
     {"java.lang.Integer", BASE_TYPES::INT},
