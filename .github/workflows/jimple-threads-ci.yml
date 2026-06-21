@@ -102,6 +102,17 @@ jobs:
         run: |
           "${{ steps.bin.outputs.esbmc }}" regression/jimple/kt-array-false/main.jimple --force-malloc-success | tail -3
 
+      # Primitive-width gate: 65536L*65536L = 2^32 is nonzero in 64-bit but
+      # truncates to 0 under the old long->int32 bug; the fixture divides by it.
+      # Correct 64-bit long => no division by zero => VERIFICATION SUCCESSFUL.
+      - name: Primitive types — long not truncated (expect SUCCESSFUL)
+        run: |
+          ESBMC="${{ steps.bin.outputs.esbmc }}"
+          "$ESBMC" regression/jimple/long-mul-true/main.jimple --force-malloc-success > lm.log 2>&1 || true
+          cat lm.log | tail -8
+          grep -q "VERIFICATION SUCCESSFUL" lm.log || { echo "FAIL: long truncation not fixed (expected SUCCESSFUL)"; exit 1; }
+          echo "PASS: long is 64-bit"
+
       - name: Sanity — C pthread race (expect VERIFICATION FAILED, engine concurrency)
         run: |
           "${{ steps.bin.outputs.esbmc }}" jimple-threads-spike/race.c --context-bound 2 | tail -3
