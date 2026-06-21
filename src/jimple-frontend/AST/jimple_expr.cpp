@@ -7,6 +7,22 @@
 #include <util/std_expr.h>
 #include <util/std_types.h>
 
+// Resolve a symbol that MUST exist by this point in conversion. A missing
+// symbol means the input module referenced something it never declared (e.g. a
+// producer emitted an invoke to a constructor/method, or a field/local, it did
+// not emit). Fail loudly naming the offending symbol instead of dereferencing a
+// null pointer -- the latter segfaults the whole frontend and hides the cause.
+static symbolt &require_symbol(contextt &ctx, const std::string &name)
+{
+  symbolt *s = ctx.find_symbol(name);
+  if (s == nullptr)
+  {
+    log_error("Could not find symbol {}", name);
+    abort();
+  }
+  return *s;
+}
+
 void jimple_constant::from_json(const json &j)
 {
   j.at("value").get_to(value);
@@ -43,7 +59,7 @@ exprt jimple_symbol::to_exprt(
 {
   // 1. Look over the local scope
   auto symbol_name = get_symbol_name(class_name, function_name, var_name);
-  symbolt &s = *ctx.find_symbol(symbol_name);
+  symbolt &s = require_symbol(ctx, symbol_name);
 
   // TODO:
   // 2. Look over the class scope
@@ -353,7 +369,7 @@ exprt jimple_expr_invoke::to_exprt(
     std::ostringstream oss;
     oss << "@parameter" << i;
     auto temp = get_symbol_name(base_class, method, oss.str());
-    symbolt &added_symbol = *ctx.find_symbol(temp);
+    symbolt &added_symbol = require_symbol(ctx, temp);
     code_assignt assign(symbol_expr(added_symbol), parameter_expr);
     block.operands().push_back(assign);
   }
@@ -412,8 +428,8 @@ exprt jimple_virtual_invoke::to_exprt(
   std::ostringstream oss;
   oss << base_class << ":" << method;
 
-  auto symbol = ctx.find_symbol(oss.str());
-  call.function() = symbol_expr(*symbol);
+  symbolt &symbol = require_symbol(ctx, oss.str());
+  call.function() = symbol_expr(symbol);
   if (!lhs.is_nil())
   {
     call.lhs() = lhs;
@@ -426,7 +442,7 @@ exprt jimple_virtual_invoke::to_exprt(
       jimple_symbol(variable).to_exprt(ctx, class_name, function_name);
     call.arguments().push_back(this_expression);
     auto temp = get_symbol_name(base_class, method, "@this");
-    symbolt &added_symbol = *ctx.find_symbol(temp);
+    symbolt &added_symbol = require_symbol(ctx, temp);
     code_assignt assign(symbol_expr(added_symbol), this_expression);
     block.operands().push_back(assign);
   }
@@ -441,7 +457,7 @@ exprt jimple_virtual_invoke::to_exprt(
     std::ostringstream oss;
     oss << "@parameter" << i;
     auto temp = get_symbol_name(base_class, method, oss.str());
-    symbolt &added_symbol = *ctx.find_symbol(temp);
+    symbolt &added_symbol = require_symbol(ctx, temp);
     code_assignt assign(symbol_expr(added_symbol), parameter_expr);
     block.operands().push_back(assign);
   }
@@ -627,11 +643,11 @@ exprt jimple_virtual_member::to_exprt(
   const std::string &function_name) const
 {
   auto result = gen_zero(type->to_typet(ctx));
-  auto struct_type = (*ctx.find_symbol("tag-" + from)).get_type();
+  auto struct_type = require_symbol(ctx, "tag-" + from).get_type();
 
   // 1. Look over the local scope
   auto symbol_name = get_symbol_name(class_name, function_name, variable);
-  symbolt &s = *ctx.find_symbol(symbol_name);
+  symbolt &s = require_symbol(ctx, symbol_name);
   member_exprt op(symbol_expr(s), "tag-" + field, type->to_typet(ctx));
   exprt &base = op.struct_op();
   if (base.type().is_pointer())

@@ -7,6 +7,22 @@
 #include <util/message.h>
 #include "util/c_typecast.h"
 
+// Resolve a symbol that MUST exist by this point in conversion. A missing
+// symbol means the module referenced something it never declared (e.g. an
+// invoke to a constructor/method, or a field/local, that was not emitted).
+// Fail loudly naming the symbol instead of dereferencing null (a segfault that
+// hides the cause).
+static symbolt &require_symbol(contextt &ctx, const std::string &name)
+{
+  symbolt *s = ctx.find_symbol(name);
+  if (s == nullptr)
+  {
+    log_error("Could not find symbol {}", name);
+    abort();
+  }
+  return *s;
+}
+
 void jimple_identity::from_json(const json &j)
 {
   j.at("identifier").get_to(at_identifier);
@@ -21,7 +37,7 @@ exprt jimple_identity::to_exprt(
 {
   // TODO: Symbol-table / Typecast
   exprt val("at_identifier");
-  symbolt &added_symbol = *ctx.find_symbol(local_name);
+  symbolt &added_symbol = require_symbol(ctx, local_name);
   symbolt rhs;
   rhs.name = "@" + at_identifier;
   rhs.id = "@" + at_identifier;
@@ -222,7 +238,7 @@ exprt jimple_assignment_field::to_exprt(
 {
     // 1. Look over the local scope
   auto symbol_name = get_symbol_name(class_name, function_name, variable);
-  symbolt &s = *ctx.find_symbol(symbol_name);
+  symbolt &s = require_symbol(ctx, symbol_name);
   member_exprt op(symbol_expr(s), "tag-" + field, s.get_type());
   exprt &base = op.struct_op();
   if(base.type().is_pointer())
@@ -464,8 +480,8 @@ exprt jimple_invoke::to_exprt(
 
   std::ostringstream oss;
   oss << base_class << ":" << method;
-  auto symbol = ctx.find_symbol(oss.str());
-  call.function() = symbol_expr(*symbol);
+  symbolt &symbol = require_symbol(ctx, oss.str());
+  call.function() = symbol_expr(symbol);
 
   if (variable != "")
   {
@@ -474,7 +490,7 @@ exprt jimple_invoke::to_exprt(
       jimple_symbol(variable).to_exprt(ctx, class_name, function_name);
     call.arguments().push_back(this_expression);
     auto temp = get_symbol_name(base_class, method, "@this");
-    symbolt &added_symbol = *ctx.find_symbol(temp);
+    symbolt &added_symbol = require_symbol(ctx, temp);
     code_assignt assign(symbol_expr(added_symbol), this_expression);
     block.operands().push_back(assign);
   }
@@ -489,7 +505,7 @@ exprt jimple_invoke::to_exprt(
     std::ostringstream oss;
     oss << "@parameter" << i;
     auto temp = get_symbol_name(base_class, method, oss.str());
-    symbolt &added_symbol = *ctx.find_symbol(temp);
+    symbolt &added_symbol = require_symbol(ctx, temp);
     code_assignt assign(symbol_expr(added_symbol), parameter_expr);
     block.operands().push_back(assign);
   }
