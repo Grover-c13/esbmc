@@ -131,8 +131,39 @@ jobs:
           grep -q "VERIFICATION SUCCESSFUL" lm.log || { echo "FAIL: long truncation not fixed (expected SUCCESSFUL)"; exit 1; }
           echo "PASS: long is 64-bit"
 
+      # Native assert/assume gate. Each fixture exercises the wired jimple
+      # Assertion (-> GOTO ASSERT, code_assertt) and Assume (-> GOTO ASSUME,
+      # code_assumet) statements over nondet inputs, on the rebuilt binary. The
+      # two -> FAILED cases prove real all-inputs checking; assume-noverprune
+      # proves an assume narrows without over-pruning; contradiction proves a
+      # genuinely vacuous proof. The verdict in test.desc must match exactly.
+      - name: Native assert/assume gate
+        run: |
+          ESBMC="${{ steps.bin.outputs.esbmc }}"
+          fail=0
+          for t in assert-mul0-true:SUCCESSFUL \
+                   assert-eq5-false:FAILED \
+                   assume-narrow-true:SUCCESSFUL \
+                   assume-noverprune-false:FAILED \
+                   bounded-anyint-false:FAILED \
+                   assume-contradiction-vacuous:SUCCESSFUL; do
+            name="${t%%:*}"; expect="${t##*:}"
+            jf="regression/jimple/$name/main.jimple"
+            echo "==================== $name (expect $expect) ===================="
+            set +e
+            "$ESBMC" "$jf" --force-malloc-success > aa.log 2>&1
+            rc=$?
+            set -e
+            tail -6 aa.log
+            echo "--- $name exit code: $rc ---"
+            grep -q "VERIFICATION $expect" aa.log || { echo "FAIL[$name]: expected VERIFICATION $expect"; fail=1; continue; }
+            echo "PASS[$name]"
+          done
+          exit $fail
+
       - name: Sanity — C pthread race (expect VERIFICATION FAILED, engine concurrency)
         run: |
+          [ -f jimple-threads-spike/race.c ] || { echo "no race.c on this branch"; exit 0; }
           "${{ steps.bin.outputs.esbmc }}" jimple-threads-spike/race.c --context-bound 2 | tail -3
 
       # Regression gates. Each fixture must reach VERIFICATION FAILED with the
