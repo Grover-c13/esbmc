@@ -179,8 +179,18 @@ exprt jimple_assignment::to_exprt(
   }
 
   auto from_expr = rhs->to_exprt(ctx, class_name, function_name);
-  c_typecastt c_typecast(ctx);
-  c_typecast.implicit_typecast(from_expr, lhs_handle.type());
+  // A nondet RHS must take the LHS's own type so it ranges over that type's FULL domain: a nondet
+  // double has to include NaN/inf and fractional values, a nondet long the full 64-bit range.
+  // jimple_nondet emits an int-typed nondet by default; narrowing it to the target via the implicit
+  // cast below would instead leave `d = (double)(nondet int)` -- only integer-valued, never-NaN
+  // doubles. Retyping the nondet directly restores the full range.
+  if (from_expr.id() == "sideeffect" && from_expr.statement() == "nondet")
+    from_expr.type() = lhs_handle.type();
+  else
+  {
+    c_typecastt c_typecast(ctx);
+    c_typecast.implicit_typecast(from_expr, lhs_handle.type());
+  }
 
   code_assignt assign(lhs_handle, from_expr);
   return assign;
@@ -306,6 +316,8 @@ std::string jimple_assertion::to_string() const
 void jimple_assertion::from_json(const json &j)
 {
   cond = jimple_expr::get_expression(j.at("expression"));
+  if (j.contains("comment"))
+    j.at("comment").get_to(comment);
 }
 
 exprt jimple_assertion::to_exprt(
@@ -315,7 +327,10 @@ exprt jimple_assertion::to_exprt(
 {
   exprt condition =
     jimple_cond_to_bool(cond->to_exprt(ctx, class_name, function_name));
-  return code_assertt(condition);
+  code_assertt assertion(condition);
+  if (!comment.empty())
+    assertion.location().comment(comment);
+  return assertion;
 }
 
 std::string jimple_assume::to_string() const
@@ -448,6 +463,14 @@ exprt jimple_invoke::to_exprt(
     return skip;
   }
 
+  // A statement-position java.lang.Integer call (result discarded): Integer is never emitted as a
+  // class, so skip rather than abort on the missing symbol (the value form returns nondet).
+  if (base_class == "java.lang.Integer")
+  {
+    code_skipt skip;
+    return skip;
+  }
+
   // java.lang.String calls are NOT skipped: they dispatch to the char-array
   // String MODEL's methods (the producer puts the model on the classpath and
   // emits it). A missing model method then fails loudly via require_symbol
@@ -471,6 +494,24 @@ exprt jimple_invoke::to_exprt(
   {
     code_skipt skip;
     return skip;
+  }
+
+  // Exception / Error constructors: skip the <init>(message, cause, …) chain. We do not model the
+  // exception object's state, so the constructor is a no-op -- the preceding `new` still allocates the
+  // object and a following `throw` still surfaces it (an uncaught throw is a violation). This matches
+  // the AssertionError / IllegalStateException handling above and avoids building a call into the bare
+  // nondet stub constructor the producer emits for a library exception (which aborts goto conversion).
+  {
+    auto ends_with = [](const std::string &s, const std::string &suf) {
+      return s.size() >= suf.size() && s.compare(s.size() - suf.size(), suf.size(), suf) == 0;
+    };
+    if (
+      method.rfind("<init>", 0) == 0 &&
+      (ends_with(base_class, "Exception") || ends_with(base_class, "Error")))
+    {
+      code_skipt skip;
+      return skip;
+    }
   }
 
   code_blockt block;
@@ -524,16 +565,21 @@ void jimple_throw::from_json(const json &j)
 }
 
 exprt jimple_throw::to_exprt(
-  contextt &,
-  const std::string &,
-  const std::string &) const
+  contextt &ctx,
+  const std::string &class_name,
+  const std::string &function_name) const
 {
-  codet p = codet("cpp-throw");
-  // TODO: throw
-  // Since the implementation of Throw isn't complete,
-  // the expression shouldn't be used.
-
-  // auto to_add = expr->to_exprt(ctx, class_name, function_name);
-  // p.move_to_operands(to_add);
-  return p;
+  // Model a `throw` as a reachability failure: a REACHED throw is a verification violation (matching
+  // jbmc's "an uncaught exception is a violation"); a throw on an infeasible path (e.g. a bounds-check
+  // throw excluded by the proof's assumptions) is simply never reached, so the assertion never fires.
+  // esbmc's `cpp-throw` machinery for the Jimple frontend is incomplete and SEGFAULTS the moment a
+  // throw is reached, so we lower to `assert(false)` instead -- sound for the uncaught case the proofs
+  // exercise (try/catch propagation is a separate TODO). A throw also HALTS the path; without that the
+  // assertion falls through into the following code and a backward goto would spin in a spurious loop,
+  // so follow it with `assume(false)` to prune the continuation exactly as the throw did.
+  (void)expr;
+  code_blockt block;
+  block.copy_to_operands(code_assertt(gen_boolean(false)));
+  block.copy_to_operands(code_assumet(gen_boolean(false)));
+  return block;
 }

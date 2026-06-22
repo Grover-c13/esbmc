@@ -84,6 +84,13 @@ void jimple_method::declare(
   if (!method_type.arguments().size())
     method_type.make_ellipsis();
 
+  // A static initializer (<clinit>) is a designated initialization function: jimple_languaget's
+  // static_lifetime_init calls every code symbol whose type carries this flag from __ESBMC_main,
+  // before main, so static fields (enum $VALUES/$SwitchMap tables, interned constants, …) hold their
+  // real initial values instead of zero/nondet.
+  if (name.compare(0, 8, "<clinit>") == 0) // name is mangled to "<clinit>_0" by now
+    method_type.set("initialization", true);
+
   added_symbol.set_type(method_type);
 }
 

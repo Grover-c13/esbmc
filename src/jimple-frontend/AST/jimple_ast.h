@@ -137,15 +137,17 @@ protected:
    */
   static symbolt get_lengthof_function()
   {
-    std::string func = "__ESBMC_get_object_size";
     code_typet code_type;
     code_type.return_type() = uint_type();
     code_type.arguments().push_back(pointer_typet(empty_typet()));
     symbolt symbol;
     symbol.mode = "C";
     symbol.set_type(code_type);
-    symbol.name = func;
-    symbol.id = func;
+    symbol.name = "__ESBMC_get_object_size";
+    // Use the C-frontend-mangled id goto-symex dispatches on so the call is intercepted by
+    // intrinsic_get_object_size (returns the array's element count). With the bare name it was never
+    // intercepted -- a body-less call returning unconstrained nondet, so `array.length` was junk.
+    symbol.id = "c:@F@__ESBMC_get_object_size";
     symbol.is_extern = false;
     symbol.file_local = false;
     return symbol;

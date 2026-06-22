@@ -156,6 +156,10 @@ public:
   virtual void from_json(const json &j) override;
 
   std::shared_ptr<jimple_expr> cond;
+  // Optional property comment surfaced in the engine's "Violated property" line. The producer stamps
+  // the bmc4j reachability/vacuity marker with a recognisable comment so the verdict parser can tell a
+  // marker firing (a normal exit is reachable -> non-vacuous) from a real user-assertion failure.
+  std::string comment;
 };
 
 /**

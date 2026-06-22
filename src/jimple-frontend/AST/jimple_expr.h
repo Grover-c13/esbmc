@@ -68,6 +68,9 @@ public:
     const std::string &function_name) const override;
 
   std::string value;
+  // 0 => integer constant (parsed as a 64-bit signed bitvector). 32/64 => an IEEE float/double
+  // constant whose decimal/NaN/Infinity text is in `value`. Set from the producer's "fpwidth" field.
+  int fp_width = 0;
 };
 
 /**

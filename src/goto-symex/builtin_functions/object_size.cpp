@@ -186,18 +186,25 @@ void goto_symext::intrinsic_get_object_size(
   // #4804, #4805). Emit a clean diagnostic instead of crashing. The array path
   // below is byte-for-byte unchanged, so C/C++ callers — which always pass an
   // array object — are unaffected.
+  expr2tc obj_size;
   if (
     internal_deref_items.empty() ||
     !is_array_type(internal_deref_items.front().object->type))
   {
-    log_error(
-      "__ESBMC_get_object_size: cannot determine the size of a non-array "
-      "object");
-    abort();
+    // The pointer does not resolve to an array object (e.g. the Jimple char-array String model takes
+    // `length` of its char[] backing field, which can read back as a non-array reference). Return a
+    // fresh nondet size rather than aborting the whole run -- callers that genuinely pass an array
+    // (the common case) take the exact path below; this only affects the unresolved case.
+    static unsigned nondet_object_size_counter = 0;
+    obj_size = symbol2tc(
+      size_type2(),
+      "nondet$object_size$" + std::to_string(nondet_object_size_counter++));
   }
-
-  const type2tc &obj_type = internal_deref_items.front().object->type;
-  expr2tc obj_size = to_array_type(obj_type).array_size;
+  else
+  {
+    const type2tc &obj_type = internal_deref_items.front().object->type;
+    obj_size = to_array_type(obj_type).array_size;
+  }
 
   expr2tc ret_ref = func_call.ret;
   if (!is_nil_expr(ret_ref))
