@@ -172,7 +172,7 @@ exprt jimple_assignment::to_exprt(
   }
 
   auto dyn2_expr = std::dynamic_pointer_cast<jimple_virtual_invoke>(rhs);
-  if (dyn2_expr && !dyn2_expr->is_nondet_call())
+  if (dyn2_expr && !dyn2_expr->is_nondet_call() && !dyn2_expr->is_intrinsic_method)
   {
     dyn2_expr->set_lhs(lhs_handle);
     return rhs->to_exprt(ctx, class_name, function_name);

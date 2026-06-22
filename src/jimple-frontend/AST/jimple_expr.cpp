@@ -393,6 +393,9 @@ void jimple_virtual_invoke::from_json(const json &j)
     parameters.push_back(std::move(jimple_expr::get_expression(x)));
   }
   method += "_" + get_hash_name();
+  // Integer.intValue lowers to a VALUE (unbox cast), not a function call -- see to_exprt below.
+  if (base_class == "java.lang.Integer" && method == "intValue_1")
+    is_intrinsic_method = true;
 }
 
 exprt jimple_virtual_invoke::to_exprt(

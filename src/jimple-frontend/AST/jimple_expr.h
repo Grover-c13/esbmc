@@ -275,6 +275,10 @@ public:
   exprt lhs;
   std::string variable;
   std::vector<std::shared_ptr<jimple_expr>> parameters;
+  // True for a call this frontend lowers to a plain VALUE expression (e.g. Integer.intValue ->
+  // a tagged-pointer unbox cast) rather than a GOTO function call. The assignment lowering must then
+  // assign that value directly instead of treating to_exprt() as a code block with a call to retarget.
+  bool is_intrinsic_method = false;
 
   void set_lhs(exprt expr)
   {
