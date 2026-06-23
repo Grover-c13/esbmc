@@ -55,9 +55,11 @@ public:
    */
   virtual exprt to_exprt(contextt &ctx) const;
 
-  // Two-phase conversion for multi-class linking: declare() registers the class
-  // type, static globals and method signatures; define() fills method bodies.
+  // Multi-class linking: declare() registers the class type and method
+  // signatures; declare_statics() registers static-field globals (run after all
+  // classes are declared so element types resolve); define() fills method bodies.
   void declare(contextt &ctx) const;
+  void declare_statics(contextt &ctx) const;
   void define(contextt &ctx) const;
 
   bool is_interface() const

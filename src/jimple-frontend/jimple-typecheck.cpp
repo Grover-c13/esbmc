@@ -35,6 +35,12 @@ bool jimple_languaget::typecheck(contextt &context, const std::string &)
     }
   }
 
+  // Static-field globals are registered only after every class is declared, so
+  // a static field's element type resolves to the real class struct regardless
+  // of declaration order (e.g. a static String[] declared before String).
+  for (auto &r : roots)
+    r.declare_statics(context);
+
   for (auto &r : roots)
     r.define(context);
 

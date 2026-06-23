@@ -173,25 +173,15 @@ void jimple_file::declare(contextt &ctx) const
     auto cf = std::dynamic_pointer_cast<jimple_class_field>(field);
     if (cf)
     {
-      // A static field is shared global state, NOT part of an instance: register it as a global symbol
-      // (read/written via jimple_static_member) and do NOT add it as a struct component. Leaving it in
-      // the instance struct is dead bloat that also breaks `gen_zero` on the struct -- an enum's struct
-      // would carry its own `$VALUES` (T**) / constant (T*) statics, whose mixed pointer widths trip a
-      // "struct_pointer vs BitVec" SMT sort error when the object is zero-initialised.
+      // A static field is shared global state, NOT part of an instance, and its
+      // element type may reference a class declared LATER (declaration order is
+      // arbitrary; e.g. a class's static String[] precedes java.lang.String).
+      // So skip statics here -- declare_statics() registers them in a dedicated
+      // pass after every class struct exists, so to_typet resolves the real
+      // element struct (a pointer-to-empty `void*` otherwise loses the element
+      // size and corrupts every indexed read of the static array).
       if (cf->modifiers.is_static())
-      {
-        typet ft = cf->type.to_typet(ctx);
-        std::string gid = name + "." + cf->name;
-        if (ctx.find_symbol(gid) == nullptr)
-        {
-          symbolt g = create_jimple_symbolt(ft, name, cf->name, gid);
-          g.lvalue = true;
-          g.static_lifetime = true;
-          g.set_value(gen_zero(ft));
-          ctx.move_symbol_to_context(g);
-        }
         continue;
-      }
 
       struct_typet::componentt comp;
       exprt &tmp = comp;
@@ -222,6 +212,32 @@ void jimple_file::declare(contextt &ctx) const
   }
 }
 
+void jimple_file::declare_statics(contextt &ctx) const
+{
+  // Phase 1b: register this class's static fields as zero-initialised globals,
+  // run AFTER every class is declared so a static field's element type resolves
+  // to the real class struct (declaration order is arbitrary; a static String[]
+  // can precede java.lang.String). A static is shared global state, NOT part of
+  // the instance struct (leaving it in the struct bloats it and trips a
+  // struct_pointer-vs-BitVec SMT sort error on gen_zero of an enum's struct).
+  for (auto const &field : body)
+  {
+    auto cf = std::dynamic_pointer_cast<jimple_class_field>(field);
+    if (!cf || !cf->modifiers.is_static())
+      continue;
+    typet ft = cf->type.to_typet(ctx);
+    std::string gid = class_name + "." + cf->name;
+    if (ctx.find_symbol(gid) == nullptr)
+    {
+      symbolt g = create_jimple_symbolt(ft, class_name, cf->name, gid);
+      g.lvalue = true;
+      g.static_lifetime = true;
+      g.set_value(gen_zero(ft));
+      ctx.move_symbol_to_context(g);
+    }
+  }
+}
+
 void jimple_file::define(contextt &ctx) const
 {
   // Phase 2: fill method bodies. All classes have been declared by now, so
@@ -238,6 +254,7 @@ exprt jimple_file::to_exprt(contextt &ctx) const
 {
   // Single-class convenience: declare then define this one class.
   declare(ctx);
+  declare_statics(ctx);
   define(ctx);
   return code_skipt();
 }
