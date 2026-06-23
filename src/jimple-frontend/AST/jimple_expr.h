@@ -67,21 +67,20 @@ bool jimple_has_string_length(const exprt &recv);
 /// `recv` is consumed. Caller must verify jimple_has_string_length(recv).
 exprt jimple_string_length_member(exprt recv);
 
-/// Lower a `java.lang.String` method call to a sound axiomatic expression,
-/// bypassing the producer-shipped char-array model body. Returns the lowering on
-/// success and `is_value` is set when the lowering is a plain VALUE (e.g.
-/// `length()` -> an int) rather than a code block. Returns nil when the method
-/// is not a recognised String intrinsic (caller then falls back to the model /
-/// nondet path). `recv` is the receiver lvalue ("" / nil for static methods).
+/// Lower a `java.lang.String` method call to a sound axiomatic VALUE expression,
+/// bypassing the producer-shipped char-array model body. Returns nil when the
+/// method is not a recognised String intrinsic (caller then falls back to a
+/// nondet over-approximation). `recv` is the receiver lvalue (nil for static
+/// methods). Every recognised lowering is a value (length -> int, equals ->
+/// bool, substring -> a fresh String ref), so callers mark the call
+/// is_intrinsic_method and assign the result directly.
 exprt jimple_string_lower(
   contextt &ctx,
   const std::string &class_name,
   const std::string &function_name,
   const std::string &method,
   const exprt &recv,
-  const std::vector<exprt> &args,
-  const exprt &lhs,
-  bool &is_value);
+  const std::vector<exprt> &args);
 
 /**
  * @brief A number constant (in decimal)

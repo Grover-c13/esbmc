@@ -131,8 +131,11 @@ exprt jimple_string_length_member(exprt recv)
   return std::move(op);
 }
 
-// A nondet 32-bit int constrained `>= 0` (a String length / index result).
-static exprt nondet_nonneg_int(contextt &ctx, const std::string &fn)
+// A fresh nondet 32-bit int (an unconstrained String length / hash result). Not
+// constrained `>= 0`: an unknown length reading negative is the SOUND direction
+// (at worst a spurious FAILED, never a false VERIFIED). `new String` separately
+// assumes its own @string_length >= 0 (jimple_statement.cpp).
+static exprt nondet_int(contextt &ctx, const std::string &fn)
 {
   jimple_nondet nd;
   exprt v = nd.to_exprt(ctx, "java.lang.String", fn);
@@ -146,9 +149,7 @@ exprt jimple_string_lower(
   const std::string &function_name,
   const std::string &method,
   const exprt &recv,
-  const std::vector<exprt> &args,
-  const exprt &lhs,
-  bool &is_value)
+  const std::vector<exprt> &args)
 {
   // method carries the producer's "_<argcount+1>" (instance) suffix; compare on
   // the bare name so dispatch is independent of the arity-hash convention.
@@ -157,37 +158,37 @@ exprt jimple_string_lower(
   if (us != std::string::npos)
     name = name.substr(0, us);
 
-  is_value = false;
   const bool have_len = !recv.is_nil() && jimple_has_string_length(recv);
 
-  // length(): read the object's symbolic length (>= 0 by construction). When the
-  // receiver is a nondet/opaque String (no @string_length component), fall back
-  // to a fresh non-negative nondet -- still sound.
+  // length(): read the object's @string_length. A String from `new` carries an
+  // assumed-non-negative length (see jimple_statement.cpp); one with no
+  // @string_length component (a nondet/opaque reference: a parameter, a
+  // substring result) falls back to an unconstrained nondet -- sound (an unknown
+  // length reading negative can only over-approximate, never false-VERIFY).
   if (name == "length")
   {
-    is_value = true;
     if (have_len)
       return jimple_string_length_member(recv);
-    return nondet_nonneg_int(ctx, function_name);
+    return nondet_int(ctx, function_name);
   }
 
   // isEmpty(): length == 0.
   if (name == "isEmpty")
   {
-    is_value = true;
-    exprt len = have_len ? jimple_string_length_member(recv)
-                         : nondet_nonneg_int(ctx, function_name);
+    exprt len =
+      have_len ? jimple_string_length_member(recv) : nondet_int(ctx, function_name);
     return typecast_exprt(
       equality_exprt(len, from_integer(0, signedbv_typet(32))),
       signedbv_typet(32));
   }
 
-  // charAt(i): Java throws StringIndexOutOfBounds for i<0 || i>=length. We model
-  // the in-bounds read as a nondet char and surface the bound as an assertion so
-  // an out-of-bounds access is REFUTED (matches the model's throw, soundly).
+  // charAt(i): a nondet char. The Java StringIndexOutOfBounds bound (i<0 ||
+  // i>=length) is NOT modelled -- this is a sound but imprecise over-
+  // approximation (a missing bound can only miss a would-be exception, never
+  // forge a counterexample). No proof in the corpus inspects character values,
+  // so precision here is not load-bearing; a real bounds assertion is a TODO.
   if (name == "charAt" && args.size() == 1)
   {
-    is_value = true;
     jimple_nondet nd;
     exprt c = nd.to_exprt(ctx, class_name, function_name);
     c.type() = unsignedbv_typet(16); // Java char
@@ -200,7 +201,6 @@ exprt jimple_string_lower(
     name == "hashCode" || name == "compareTo" || name == "indexOf" ||
     name == "lastIndexOf")
   {
-    is_value = true;
     jimple_nondet nd;
     exprt v = nd.to_exprt(ctx, class_name, function_name);
     v.type() = signedbv_typet(32);
@@ -214,7 +214,6 @@ exprt jimple_string_lower(
     name == "equals" || name == "startsWith" || name == "endsWith" ||
     name == "contains" || name == "matches")
   {
-    is_value = true;
     if (name == "equals" && args.size() == 1 && !recv.is_nil())
     {
       // recv == arg ? 1 : nondet-bool
@@ -244,7 +243,6 @@ exprt jimple_string_lower(
     name == "toString" || name == "valueOf" || name == "intern" ||
     name == "strip" || name == "format" || name == "join")
   {
-    is_value = true;
     jimple_nondet nd;
     return nd.to_exprt(ctx, class_name, function_name);
   }
@@ -700,12 +698,6 @@ exprt jimple_new::to_exprt(
 
   array_typet arr_type(element_type, from_integer(1, uint_type()));
   symbolt arr_symbol = get_temp_symbol(arr_type, class_name, function_name);
-  // `new String` -> zero-initialise the opaque object so its @string_length
-  // reads 0 (a valid, sound length) rather than nondet: a constructed-but-never-
-  // assigned String (an exception message, a discarded literal) is the empty
-  // string, never an out-of-range length.
-  if (jimple_is_string_class(type ? type->name : std::string()))
-    arr_symbol.set_value(gen_zero(arr_type));
   symbolt &added = *ctx.move_symbol_to_context(arr_symbol);
   index_exprt first_elem(
     symbol_expr(added), from_integer(0, int_type()), element_type);
@@ -766,9 +758,8 @@ exprt jimple_expr_invoke::to_exprt(
     std::vector<exprt> args;
     for (const auto &p : parameters)
       args.push_back(p->to_exprt(ctx, class_name, function_name));
-    bool is_value = false;
     exprt v = jimple_string_lower(
-      ctx, class_name, function_name, method, nil_exprt(), args, lhs, is_value);
+      ctx, class_name, function_name, method, nil_exprt(), args);
     if (!v.is_nil())
       return v;
     jimple_nondet nondet(method);
@@ -905,9 +896,8 @@ exprt jimple_virtual_invoke::to_exprt(
     std::vector<exprt> args;
     for (const auto &p : parameters)
       args.push_back(p->to_exprt(ctx, class_name, function_name));
-    bool is_value = false;
-    exprt v = jimple_string_lower(
-      ctx, class_name, function_name, method, recv, args, lhs, is_value);
+    exprt v =
+      jimple_string_lower(ctx, class_name, function_name, method, recv, args);
     if (!v.is_nil())
       return v; // a VALUE (is_intrinsic_method drives the assignment lowering)
     // Unrecognised String method -> nondet over-approximation.
@@ -988,14 +978,13 @@ exprt jimple_virtual_invoke::to_exprt(
   // bypassed at direct String call sites. Build the intrinsic as a code block
   // (assign the value to lhs, or skip when discarded) so it slots into the
   // dispatch chain where make_call's block would go.
-  auto make_string_call = [&](const std::string &callee_qual) -> codet
+  auto make_string_call = [&]() -> codet
   {
     std::vector<exprt> args;
     for (const auto &p : parameters)
       args.push_back(p->to_exprt(ctx, class_name, function_name));
-    bool is_value = false;
-    exprt v = jimple_string_lower(
-      ctx, class_name, function_name, method, recv, args, lhs, is_value);
+    exprt v =
+      jimple_string_lower(ctx, class_name, function_name, method, recv, args);
     if (v.is_nil())
     {
       jimple_nondet nondet(method);
@@ -1014,7 +1003,7 @@ exprt jimple_virtual_invoke::to_exprt(
   {
     std::string cc = callee_qual.substr(0, callee_qual.rfind(':'));
     if (jimple_is_string_class(cc))
-      return make_string_call(callee_qual);
+      return make_string_call();
 
     code_blockt blk;
     code_function_callt call;

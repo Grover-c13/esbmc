@@ -208,18 +208,50 @@ exprt jimple_assignment::to_exprt(
   // non-existent member. Such an object also cannot be dispatched on later
   // (the read site gates the same way), so skipping the stamp is consistent.
   auto new_expr = std::dynamic_pointer_cast<jimple_new>(rhs);
-  if (new_expr && jimple_has_class_id(lhs_handle))
+  if (new_expr)
   {
-    int id = jimple_hierarchy::class_id(new_expr->get_type_name());
-    if (id != 0)
+    code_blockt block;
+    block.copy_to_operands(assign);
+    bool emitted = false;
+
+    if (jimple_has_class_id(lhs_handle))
     {
-      code_blockt block;
-      block.copy_to_operands(assign);
-      block.copy_to_operands(code_assignt(
-        jimple_class_id_member(lhs_handle),
-        from_integer(id, signedbv_typet(32))));
-      return block;
+      int id = jimple_hierarchy::class_id(new_expr->get_type_name());
+      if (id != 0)
+      {
+        block.copy_to_operands(code_assignt(
+          jimple_class_id_member(lhs_handle),
+          from_integer(id, signedbv_typet(32))));
+        emitted = true;
+      }
     }
+
+    // `new String` -> constrain its @string_length to a non-negative nondet
+    // (assume >= 0). We do NOT pin it to 0: the producer strips literal content,
+    // so the true length is unknown, and pinning 0 would be an UNDER-
+    // approximation (a proof reading a constructed string's length could pass
+    // spuriously). A nondet >= 0 is the sound over-approximation.
+    if (
+      jimple_is_string_class(new_expr->get_type_name()) &&
+      jimple_has_string_length(lhs_handle))
+    {
+      exprt len_field = jimple_string_length_member(lhs_handle);
+      exprt nd("sideeffect", signedbv_typet(32));
+      nd.statement("nondet");
+      symbolt len_tmp =
+        get_temp_symbol(signedbv_typet(32), class_name, function_name);
+      symbolt &len_added = *ctx.move_symbol_to_context(len_tmp);
+      block.copy_to_operands(code_assignt(symbol_expr(len_added), nd));
+      code_assumet nonneg(binary_relation_exprt(
+        symbol_expr(len_added), ">=", from_integer(0, signedbv_typet(32))));
+      block.copy_to_operands(nonneg);
+      block.copy_to_operands(
+        code_assignt(len_field, symbol_expr(len_added)));
+      emitted = true;
+    }
+
+    if (emitted)
+      return block;
   }
 
   return assign;
