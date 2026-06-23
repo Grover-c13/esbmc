@@ -519,7 +519,17 @@ exprt jimple_invoke::to_exprt(
 
   std::ostringstream oss;
   oss << base_class << ":" << method;
-  symbolt &symbol = require_symbol(ctx, oss.str());
+  // Unresolved invoke statement: a method on a base-typed library class (java.lang.Class.forName) or an
+  // unmodelled library call reached only by dead model code (e.g. kotlin Intrinsics.checkHasClass).
+  // Skip it -- a no-op over-approximation, consistent with the Intrinsics/Runtime special-cases above --
+  // rather than aborting GOTO generation over an often-unreachable call. Warn so it is never silent.
+  symbolt *isym = ctx.find_symbol(oss.str());
+  if (!isym)
+  {
+    log_warning("Unresolved invoke {} -> skipped (over-approximation)", oss.str());
+    return code_skipt();
+  }
+  symbolt &symbol = *isym;
   call.function() = symbol_expr(symbol);
 
   if (variable != "")

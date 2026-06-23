@@ -1,7 +1,10 @@
 #include <jimple-frontend/AST/jimple_expr.h>
+#include <jimple-frontend/AST/jimple_hierarchy.h>
 #include <util/arith_tools.h>
+#include <util/c_sizeof.h>
 #include <util/c_typecast.h>
 #include <util/c_types.h>
+#include <util/namespace.h>
 #include <util/expr_util.h>
 #include <util/ieee_float.h>
 #include <util/std_code.h>
@@ -363,6 +366,109 @@ void jimple_new::from_json(const json &j)
   type = std::make_shared<jimple_type>(t);
 }
 
+// True if [t] is (a pointer to) an enum's struct -- recognised by the synthesised `__ordinal` field the
+// java.lang.Enum model contributes to every enum subclass.
+static bool is_enum_alloc(const typet &t)
+{
+  const typet &st = t.is_pointer() ? t.subtype() : t;
+  if (st.id() != "struct")
+    return false;
+  for (const auto &comp : to_struct_type(st).components())
+    if (comp.get_name().as_string().find("__ordinal") != std::string::npos)
+      return true;
+  return false;
+}
+
+// An allocation in a class's STATIC INITIALISER (`<clinit>`/`$values`) escapes into a static field and
+// must outlive the call (enum constants -> NAME statics; `$VALUES`; a `when`'s `$SwitchMap` int[]).
+static bool in_static_init(const std::string &function_name)
+{
+  return function_name.find("clinit") != std::string::npos ||
+         function_name.find("$values") != std::string::npos;
+}
+
+// MODEL classes (the bundled JDK/Kotlin/bmc4j operational models) allocate heavily in their own
+// initialisers; heap-allocating all of those explodes the dynamic-memory VC count. Their static state
+// rarely escapes into proof-visible reads, so keep them on cheap stack temps and reserve the heap path
+// for USER code (and any enum). This keeps the suite fast while fixing user static-init dangles.
+static bool is_model_class(const std::string &class_name)
+{
+  static const char *prefixes[] = {"java.",  "javax.",       "kotlin.",
+                                    "kotlinx.", "jdk.",       "sun.",
+                                    "scala.", "org.cprover.", "org.bmc4j."};
+  for (const char *p : prefixes)
+    if (class_name.rfind(p, 0) == 0)
+      return true;
+  return false;
+}
+
+// Heap-allocate (cpp_new) when the object needs to outlive its allocating frame: any enum constant/array,
+// or a user class's static-init escape. Everything else stays a cheap stack temp.
+static bool needs_heap_alloc(
+  const typet &element_type,
+  const std::string &class_name,
+  const std::string &function_name)
+{
+  // Enum constant/array (always), or USER code allocating an OBJECT (struct -- heap + zero-init so its
+  // fields read the Java default, e.g. a `lateinit` field reads null) or a static-init array. Model
+  // classes keep cheap stack temps. (Heap objects each add per-deref dynamic-memory VCs -> slower, but
+  // correct: a stack-temp `new` reads its uninitialised fields as nondet.)
+  return is_enum_alloc(element_type) ||
+         (!is_model_class(class_name) &&
+          ((element_type.id() == "struct" && function_name != "main") ||
+           in_static_init(function_name)));
+}
+
+// Build the C++-style `cpp_new`/`cpp_new[]` heap allocation side effect. goto_convert's do_cpp_new reads
+// the element COUNT from the `size` field (size_irep), multiplies by sizeof, and hands symex_cpp_new a
+// fresh persistent `symex_dynamic::dynamic_N` object (unique counter -> no dangle, no aliasing).
+static exprt make_cpp_new(
+  contextt &ctx,
+  const typet &element_type,
+  const exprt *count)
+{
+  side_effect_exprt new_expr(count ? "cpp_new[]" : "cpp_new");
+  new_expr.type() = pointer_typet(element_type);
+  if (count)
+    new_expr.size(*count); // element count goes in `size`, NOT cmt_size (do_cpp_new overwrites cmt_size)
+
+  namespacet ns(ctx);
+  exprt size_of = c_sizeof(element_type, ns);
+  size_of.set("#c_sizeof_type", element_type);
+  new_expr.set("sizeof", size_of);
+  return new_expr;
+}
+
+exprt jimple_new::to_exprt(
+  contextt &ctx,
+  const std::string &class_name,
+  const std::string &function_name) const
+{
+  // `new T` (a single object) must allocate T's STRUCT, not a T* reference slot. The inherited
+  // jimple_newarray path takes its element type from to_typet(), which for a class returns
+  // pointer_typet(struct) -- right for ARRAY elements (Java arrays hold references) but wrong for the
+  // object itself: it would size the allocation as a single pointer, so any field write past the first
+  // pointer's width (e.g. Enum.__ordinal, or any class with more than one field) lands out of bounds.
+  // Allocate a 1-element array of the STRUCT type and return &arr[0] (a T*) so field writes have the
+  // whole object to land in.
+  typet element_type;
+  const symbolt *sym = ctx.find_symbol("tag-" + type->name);
+  if (sym != nullptr)
+    element_type = sym->get_type();
+  else
+    element_type = type->to_typet(ctx); // unresolved class: fall back to the reference slot
+
+  if (needs_heap_alloc(element_type, class_name, function_name))
+    return make_cpp_new(ctx, element_type, nullptr);
+
+  array_typet arr_type(element_type, from_integer(1, uint_type()));
+  symbolt arr_symbol = get_temp_symbol(arr_type, class_name, function_name);
+  symbolt &added = *ctx.move_symbol_to_context(arr_symbol);
+  index_exprt first_elem(
+    symbol_expr(added), from_integer(0, int_type()), element_type);
+  return address_of_exprt(first_elem);
+}
+
 void jimple_expr_invoke::from_json(const json &j)
 {
   lhs = nil_exprt();
@@ -440,8 +546,13 @@ exprt jimple_expr_invoke::to_exprt(
   auto symbol = ctx.find_symbol(oss.str());
   if (!symbol)
   {
-    log_error("Could not find symbol {}", oss.str());
-    abort();
+    // Unresolved method: a call on a base-typed library class (java.lang.Class.forName, String/Integer
+    // surface) or an unmodelled library method reached only by dead model code. JBMC lowers an
+    // unmodelled call to a nondet return; do the same here (a sound over-approximation) instead of
+    // aborting GOTO generation over a frequently-unreachable call. Warn so it is never silent.
+    log_warning("Unresolved method {} -> nondet result (over-approximation)", oss.str());
+    jimple_nondet nondet(method);
+    return nondet.to_exprt(ctx, class_name, function_name);
   }
   call.function() = symbol_expr(*symbol);
   if (!lhs.is_nil())
@@ -547,10 +658,54 @@ exprt jimple_virtual_invoke::to_exprt(
   code_blockt block;
   code_function_callt call;
 
-  std::ostringstream oss;
-  oss << base_class << ":" << method;
+  // VIRTUAL DISPATCH: resolve the callee against the RECEIVER's real type, not the call site's
+  // declared base type. The producer emits `base_class` = the static type at the call (an interface
+  // / superclass, e.g. java.util.List). Binding straight to `base_class:method` reaches the library
+  // model's nondet stub even when the receiver's concrete class overrides the method -- so a true
+  // property (`new MyList().size() == 1` held through a `List` ref) comes back FALSELY REFUTED.
+  // Walk from the receiver's struct type up its superclass chain to the nearest body, exactly like
+  // the JVM. When the receiver type IS the base (a genuinely base-typed / polymorphic reference), the
+  // resolution lands back on base_class and behaviour is unchanged.
+  std::string callee_class = base_class;
+  if (variable != "")
+  {
+    exprt recv =
+      jimple_symbol(variable).to_exprt(ctx, class_name, function_name);
+    typet rt = recv.type();
+    if (rt.id() == "pointer")
+      rt = rt.subtype();
+    std::string recv_class;
+    if (rt.id() == "struct")
+      recv_class = to_struct_type(rt).tag().as_string();
+    else if (rt.id() == "symbol")
+    {
+      std::string tag = rt.get("identifier").as_string();
+      if (tag.compare(0, 4, "tag-") == 0)
+        recv_class = tag.substr(4);
+    }
+    if (!recv_class.empty())
+    {
+      std::string resolved =
+        jimple_hierarchy::resolve_method(ctx, recv_class, method);
+      if (!resolved.empty())
+        callee_class = resolved;
+    }
+  }
 
-  symbolt &symbol = require_symbol(ctx, oss.str());
+  std::ostringstream oss;
+  oss << callee_class << ":" << method;
+
+  // Unresolved virtual method -> nondet over-approximation (jbmc semantics), not an abort. Same
+  // rationale as jimple_expr_invoke::to_exprt: an unmodelled / base-typed-class call reached only by
+  // dead model code must not kill GOTO generation. Warn so it stays visible.
+  symbolt *vsym = ctx.find_symbol(oss.str());
+  if (!vsym)
+  {
+    log_warning("Unresolved method {} -> nondet result (over-approximation)", oss.str());
+    jimple_nondet nondet(method);
+    return nondet.to_exprt(ctx, class_name, function_name);
+  }
+  symbolt &symbol = *vsym;
   call.function() = symbol_expr(symbol);
   if (!lhs.is_nil())
   {
@@ -563,7 +718,7 @@ exprt jimple_virtual_invoke::to_exprt(
     auto this_expression =
       jimple_symbol(variable).to_exprt(ctx, class_name, function_name);
     call.arguments().push_back(this_expression);
-    auto temp = get_symbol_name(base_class, method, "@this");
+    auto temp = get_symbol_name(callee_class, method, "@this");
     symbolt &added_symbol = require_symbol(ctx, temp);
     code_assignt assign(symbol_expr(added_symbol), this_expression);
     block.operands().push_back(assign);
@@ -578,7 +733,7 @@ exprt jimple_virtual_invoke::to_exprt(
     // Hack, manually adding parameters, this should be done at symex
     std::ostringstream oss;
     oss << "@parameter" << i;
-    auto temp = get_symbol_name(base_class, method, oss.str());
+    auto temp = get_symbol_name(callee_class, method, oss.str());
     symbolt &added_symbol = require_symbol(ctx, temp);
     code_assignt assign(symbol_expr(added_symbol), parameter_expr);
     block.operands().push_back(assign);
@@ -600,18 +755,14 @@ exprt jimple_newarray::to_exprt(
   if (count.is_nil())
     count = from_integer(1, uint_type());
 
-  // Allocate `new T[N]` as a fresh, typed STACK array object `T[N]`, not dynamic memory. goto-symex's
-  // dynamic-allocation machinery (cpp_new[]/malloc side effects) is not wired up for the Jimple
-  // frontend and crashes; a plain array symbol is a first-class object whose `array_size` is exactly N.
-  // `array.length` (lengthof -> __ESBMC_get_object_size) reads that size back, and element indexing
-  // dereferences it directly. Return &arr[0] so the value has the array's element-pointer (T*) type,
-  // matching how Jimple holds an array reference. The previous code allocated via a body-less `malloc`
-  // symbol with a byte size and a void* result, so nothing was tracked and `a.length` was nondet.
+  if (needs_heap_alloc(element_type, class_name, function_name))
+    return make_cpp_new(ctx, element_type, &count);
+
   array_typet arr_type(element_type, count);
   symbolt arr_symbol = get_temp_symbol(arr_type, class_name, function_name);
   symbolt &added = *ctx.move_symbol_to_context(arr_symbol);
-  exprt arr_ref = symbol_expr(added);
-  index_exprt first_elem(arr_ref, from_integer(0, int_type()), element_type);
+  index_exprt first_elem(
+    symbol_expr(added), from_integer(0, int_type()), element_type);
   return address_of_exprt(first_elem);
 };
 
@@ -702,8 +853,20 @@ exprt jimple_static_member::to_exprt(
   symbolt *s = ctx.find_symbol(symbol_name);
   if (s == nullptr)
   {
-    log_error("jimple static_member: unresolved field {}.{}", from, field);
-    abort();
+    // Unresolved static field on a base-typed / unemitted library class (java.lang.Boolean.FALSE, ...),
+    // typically reached only by dead model code. Register an on-demand, zero-initialised static global
+    // (like jimple_file's own static-field globals) so both reads and assignment LHS resolve, instead of
+    // aborting GOTO generation. Warn so it stays visible.
+    log_warning("Unresolved static field {}.{} -> on-demand global (over-approximation)", from, field);
+    std::string ondemand_id = from + "." + field;
+    typet ft = type->to_typet(ctx);
+    symbolt g = create_jimple_symbolt(ft, from, field, ondemand_id);
+    g.lvalue = true;
+    g.static_lifetime = true;
+    g.is_extern = false;
+    g.set_value(gen_zero(ft));
+    ctx.move_symbol_to_context(g);
+    return symbol_expr(*ctx.find_symbol(ondemand_id));
   }
   member_exprt op(symbol_expr(*s), "tag-" + field, s->get_type());
   exprt &base = op.struct_op();

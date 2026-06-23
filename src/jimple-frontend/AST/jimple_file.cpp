@@ -139,21 +139,11 @@ void jimple_file::declare(contextt &ctx) const
     auto cf = std::dynamic_pointer_cast<jimple_class_field>(field);
     if (cf)
     {
-      struct_typet::componentt comp;
-      exprt &tmp = comp;
-      tmp = field->to_exprt(ctx, name, name);
-      comp.swap(tmp);
-      t.components().push_back(comp);
-      // Only bitvector fields carry a width; reference-typed fields (class types,
-      // e.g. a lambda singleton's INSTANCE) have none, so skip them in the size
-      // sum instead of std::stoi-ing an empty string (which aborts).
-      const std::string w = comp.type().width().as_string();
-      if (!w.empty())
-        total_size += std::stoi(w);
-
-      // A static field is shared global state. Register a global symbol so
-      // jimple_static_member can read and write it (e.g. across threads).
-      // Instance fields stay as struct components above.
+      // A static field is shared global state, NOT part of an instance: register it as a global symbol
+      // (read/written via jimple_static_member) and do NOT add it as a struct component. Leaving it in
+      // the instance struct is dead bloat that also breaks `gen_zero` on the struct -- an enum's struct
+      // would carry its own `$VALUES` (T**) / constant (T*) statics, whose mixed pointer widths trip a
+      // "struct_pointer vs BitVec" SMT sort error when the object is zero-initialised.
       if (cf->modifiers.is_static())
       {
         typet ft = cf->type.to_typet(ctx);
@@ -166,7 +156,20 @@ void jimple_file::declare(contextt &ctx) const
           g.set_value(gen_zero(ft));
           ctx.move_symbol_to_context(g);
         }
+        continue;
       }
+
+      struct_typet::componentt comp;
+      exprt &tmp = comp;
+      tmp = field->to_exprt(ctx, name, name);
+      comp.swap(tmp);
+      t.components().push_back(comp);
+      // Only bitvector fields carry a width; reference-typed fields (class types,
+      // e.g. a lambda singleton's INSTANCE) have none, so skip them in the size
+      // sum instead of std::stoi-ing an empty string (which aborts).
+      const std::string w = comp.type().width().as_string();
+      if (!w.empty())
+        total_size += std::stoi(w);
     }
   }
 

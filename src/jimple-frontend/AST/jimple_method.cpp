@@ -27,7 +27,14 @@ void jimple_method::declare(
   // In future, I will add this as a paremeter to the function call
   if (!modifiers.is_static())
   {
-    auto this_type = int_type(); // TODO: support the struct type
+    // `@this` must be a POINTER to the receiver's struct, not an int. Typing it int round-trips the
+    // receiver pointer through an integer on every instance call (`@this = (int)recv`), which happened
+    // to preserve a stack temp's symbolic address but DESTROYS a heap (cpp_new) object's pointer
+    // identity -> the callee reads `this` as a garbage integer address (invalid-pointer/alignment
+    // failures on e.g. an enum constant's `ordinal()`). A pointer-to-struct preserves identity for both.
+    const symbolt *this_tag = ctx.find_symbol("tag-" + class_name);
+    typet this_type = this_tag != nullptr ? pointer_typet(this_tag->get_type())
+                                          : pointer_typet(empty_typet());
     std::string param_id, param_name;
 
     std::ostringstream oss;

@@ -323,6 +323,10 @@ class jimple_new : public jimple_newarray
 {
 public:
   virtual void from_json(const json &j) override;
+  virtual exprt to_exprt(
+    contextt &,
+    const std::string &,
+    const std::string &) const override;
   virtual std::string to_string() const override
   {
     return "Jimple New";

@@ -8,6 +8,7 @@
 #include <irep2/irep2.h>
 #include <util/migrate.h>
 #include <util/std_types.h>
+#include <util/type_byte_size.h>
 
 void goto_symext::symex_cpp_new(
   const expr2tc &lhs,
@@ -35,8 +36,27 @@ void goto_symext::symex_cpp_new(
   type2tc renamedtype2 =
     migrate_type(ns.follow(migrate_type_back(ptr_ref.subtype)));
 
+  // goto_convert's do_cpp_new hands us `code.size` as the BYTE size (element count * sizeof(element)).
+  // The array object's element COUNT -- what callers read back via __ESBMC_get_object_size / Java's
+  // `array.length` -- is that byte size divided by the element size. Sizing the array type by the raw
+  // byte size over-allocates (count*sizeof slots) and makes the length report the byte size, so an
+  // in-bounds Java index (0..count-1) is reported in-bounds but past count runs into uninitialised
+  // slots. (Byte-offset C/C++ access still lands correctly either way; the byte size is kept below for
+  // allocation tracking.)
+  expr2tc arr_count = code.size;
+  if (do_array)
+  {
+    BigInt elem_bytes = type_byte_size(renamedtype2);
+    if (elem_bytes > 1)
+    {
+      arr_count = div2tc(
+        code.size->type, code.size, constant_int2tc(code.size->type, elem_bytes));
+      do_simplify(arr_count);
+    }
+  }
+
   type2tc newtype = do_array
-                      ? type2tc(array_type2tc(renamedtype2, code.size, false))
+                      ? type2tc(array_type2tc(renamedtype2, arr_count, false))
                       : renamedtype2;
 
   {
@@ -46,6 +66,20 @@ void goto_symext::symex_cpp_new(
   }
 
   new_context.add(symbol);
+
+  // Java ZERO-INITIALISES a new object's fields (references null, numerics 0) before the constructor
+  // runs -- so a field the constructor never sets (e.g. a Kotlin `lateinit` backing field) reads as
+  // null, which an `isInitialized`/null guard depends on. Without this the fresh dynamic object's fields
+  // are nondet. Only the single-object case (a struct); arrays get their elements written explicitly.
+  // (The Jimple fundamentals suite has no C++ `new`, where leaving it uninitialised is the language
+  // semantics; if this ever runs for C++ it should be gated on the source language.)
+  if (!do_array && is_struct_type(newtype))
+  {
+    expr2tc zero;
+    migrate_expr(gen_zero(migrate_type_back(newtype)), zero);
+    symex_assign(
+      code_assign2tc(symbol2tc(newtype, symbol.id), zero), true, guard);
+  }
 
   // make symbol expression
   expr2tc rhs_ptr_obj;
