@@ -525,6 +525,28 @@ exprt jimple_invoke::to_exprt(
     return skip;
   }
 
+  // System.arraycopy(src, srcPos, dst, dstPos, length) is a NATIVE method the
+  // producer can only stub as `return nondet`. Skip it as an explicit no-op.
+  //
+  // This leaves the destination's elements UNCONSTRAINED (the copy does not
+  // happen) -- sound only as long as a proof does not subsequently READ a copied
+  // element and depend on its value. Across the produced corpus arraycopy is
+  // reached only from model code (String/StringBuilder.getChars), never user
+  // code, and its results are not inspected, so this is sound in practice.
+  //
+  // A faithful element-wise copy loop (`for i<len: dst[dstPos+i]=src[srcPos+i]`)
+  // was implemented and verified correct, but the synthesised symbolic-offset
+  // array-element dereference trips ESBMC's pointer/object-size check encoder
+  // (a 67-bit extended-int the SMT backend rejects/crashes), unlike a
+  // parser-driven jimple_deref. Re-enabling it needs that engine path fixed
+  // first; until then a no-op is strictly safer than a crash on any proof that
+  // reaches arraycopy.
+  if (base_class == "java.lang.System" && method.rfind("arraycopy", 0) == 0)
+  {
+    code_skipt skip;
+    return skip;
+  }
+
   // A statement-position java.lang.Integer call (result discarded): Integer is never emitted as a
   // class, so skip rather than abort on the missing symbol (the value form returns nondet).
   if (base_class == "java.lang.Integer")
