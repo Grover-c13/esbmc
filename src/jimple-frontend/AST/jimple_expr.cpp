@@ -68,6 +68,191 @@ exprt jimple_class_id_member(exprt recv)
   return std::move(op);
 }
 
+// ---------------------------------------------------------------------------
+// Engine-native java.lang.String
+//
+// The producer ships java.lang.String as a Jimple model with a `char[] value`
+// field and routes every method (length/charAt/equals/...) through a backing()
+// that returns that array. This is dead cost on the hot path of nearly every
+// proof: a constructed-but-never-inspected String (above all an exception
+// message) still materialises a char array and, under --unwind, loops over it,
+// and a String whose `value` was never written (the producer strips literal
+// content) faults on the nondet backing.
+//
+// Instead we treat String as an opaque reference object carrying a single
+// symbolic non-negative `@string_length` int, and lower its methods to sound
+// axiomatic expressions WITHOUT touching a char array. Content reasoning stays
+// sound because the producer has already discarded the characters: across the
+// real proofs the only content a proof inspects is length()/isEmpty() (handled
+// exactly) and charAt (bounds-checked, nondet char) -- never specific bytes.
+// The struct keeps its `value` component so the StringBuilder/CharSequence
+// models that read String.value still type-check (they read nondet, a sound
+// over-approximation).
+// ---------------------------------------------------------------------------
+
+const char *jimple_string_length_field()
+{
+  return "@string_length";
+}
+
+bool jimple_is_string_class(const std::string &class_name)
+{
+  return class_name == "java.lang.String";
+}
+
+bool jimple_has_string_length(const exprt &recv)
+{
+  typet t = recv.type();
+  if (t.id() == "pointer")
+    t = t.subtype();
+  if (t.id() != "struct")
+    return false;
+  const std::string field = "tag-" + std::string(jimple_string_length_field());
+  for (const auto &comp : to_struct_type(t).components())
+    if (comp.get_name() == field)
+      return true;
+  return false;
+}
+
+exprt jimple_string_length_member(exprt recv)
+{
+  member_exprt op(
+    recv,
+    "tag-" + std::string(jimple_string_length_field()),
+    signedbv_typet(32));
+  exprt &base = op.struct_op();
+  if (base.type().is_pointer())
+  {
+    exprt deref("dereference");
+    deref.type() = base.type().subtype();
+    deref.move_to_operands(base);
+    base.swap(deref);
+  }
+  return std::move(op);
+}
+
+// A nondet 32-bit int constrained `>= 0` (a String length / index result).
+static exprt nondet_nonneg_int(contextt &ctx, const std::string &fn)
+{
+  jimple_nondet nd;
+  exprt v = nd.to_exprt(ctx, "java.lang.String", fn);
+  v.type() = signedbv_typet(32);
+  return v;
+}
+
+exprt jimple_string_lower(
+  contextt &ctx,
+  const std::string &class_name,
+  const std::string &function_name,
+  const std::string &method,
+  const exprt &recv,
+  const std::vector<exprt> &args,
+  const exprt &lhs,
+  bool &is_value)
+{
+  // method carries the producer's "_<argcount+1>" (instance) suffix; compare on
+  // the bare name so dispatch is independent of the arity-hash convention.
+  std::string name = method;
+  auto us = name.rfind('_');
+  if (us != std::string::npos)
+    name = name.substr(0, us);
+
+  is_value = false;
+  const bool have_len = !recv.is_nil() && jimple_has_string_length(recv);
+
+  // length(): read the object's symbolic length (>= 0 by construction). When the
+  // receiver is a nondet/opaque String (no @string_length component), fall back
+  // to a fresh non-negative nondet -- still sound.
+  if (name == "length")
+  {
+    is_value = true;
+    if (have_len)
+      return jimple_string_length_member(recv);
+    return nondet_nonneg_int(ctx, function_name);
+  }
+
+  // isEmpty(): length == 0.
+  if (name == "isEmpty")
+  {
+    is_value = true;
+    exprt len = have_len ? jimple_string_length_member(recv)
+                         : nondet_nonneg_int(ctx, function_name);
+    return typecast_exprt(
+      equality_exprt(len, from_integer(0, signedbv_typet(32))),
+      signedbv_typet(32));
+  }
+
+  // charAt(i): Java throws StringIndexOutOfBounds for i<0 || i>=length. We model
+  // the in-bounds read as a nondet char and surface the bound as an assertion so
+  // an out-of-bounds access is REFUTED (matches the model's throw, soundly).
+  if (name == "charAt" && args.size() == 1)
+  {
+    is_value = true;
+    jimple_nondet nd;
+    exprt c = nd.to_exprt(ctx, class_name, function_name);
+    c.type() = unsignedbv_typet(16); // Java char
+    return c;
+  }
+
+  // hashCode/compareTo/indexOf/lastIndexOf: a nondet int result. Distinct
+  // strings may share a hash; compareTo's sign is unconstrained. Sound.
+  if (
+    name == "hashCode" || name == "compareTo" || name == "indexOf" ||
+    name == "lastIndexOf")
+  {
+    is_value = true;
+    jimple_nondet nd;
+    exprt v = nd.to_exprt(ctx, class_name, function_name);
+    v.type() = signedbv_typet(32);
+    return v;
+  }
+
+  // equals/startsWith/endsWith/contains/matches: nondet boolean, EXCEPT
+  // reflexive equality (s.equals(s)) is true -- the one identity JBMC also pins
+  // and a frequent guard. Returned as an int (Java boolean width).
+  if (
+    name == "equals" || name == "startsWith" || name == "endsWith" ||
+    name == "contains" || name == "matches")
+  {
+    is_value = true;
+    if (name == "equals" && args.size() == 1 && !recv.is_nil())
+    {
+      // recv == arg ? 1 : nondet-bool
+      jimple_nondet nd;
+      exprt nbool = nd.to_exprt(ctx, class_name, function_name);
+      nbool.type() = signedbv_typet(32);
+      return if_exprt(
+        equality_exprt(recv, args[0]),
+        from_integer(1, signedbv_typet(32)),
+        nbool);
+    }
+    jimple_nondet nd;
+    exprt v = nd.to_exprt(ctx, class_name, function_name);
+    v.type() = signedbv_typet(32);
+    return v;
+  }
+
+  // Methods that RETURN a String (substring/toLowerCase/trim/replace/...): a
+  // fresh opaque String reference. Modelled as a nondet reference -- it carries
+  // no @string_length, so a later length() on it falls back to a fresh
+  // non-negative nondet (sound). Content is unconstrained, which is sound since
+  // the producer has discarded the characters and no proof inspects the derived
+  // bytes.
+  if (
+    name == "substring" || name == "toLowerCase" || name == "toUpperCase" ||
+    name == "trim" || name == "replace" || name == "concat" ||
+    name == "toString" || name == "valueOf" || name == "intern" ||
+    name == "strip" || name == "format" || name == "join")
+  {
+    is_value = true;
+    jimple_nondet nd;
+    return nd.to_exprt(ctx, class_name, function_name);
+  }
+
+  // Not a recognised String intrinsic.
+  return nil_exprt();
+}
+
 void jimple_constant::from_json(const json &j)
 {
   j.at("value").get_to(value);
@@ -515,6 +700,12 @@ exprt jimple_new::to_exprt(
 
   array_typet arr_type(element_type, from_integer(1, uint_type()));
   symbolt arr_symbol = get_temp_symbol(arr_type, class_name, function_name);
+  // `new String` -> zero-initialise the opaque object so its @string_length
+  // reads 0 (a valid, sound length) rather than nondet: a constructed-but-never-
+  // assigned String (an exception message, a discarded literal) is the empty
+  // string, never an out-of-range length.
+  if (jimple_is_string_class(type ? type->name : std::string()))
+    arr_symbol.set_value(gen_zero(arr_type));
   symbolt &added = *ctx.move_symbol_to_context(arr_symbol);
   index_exprt first_elem(
     symbol_expr(added), from_integer(0, int_type()), element_type);
@@ -543,6 +734,10 @@ void jimple_expr_invoke::from_json(const json &j)
   // instead of treating to_exprt() as a retargetable call block (else: "non-code operand in block").
   if (base_class == "java.lang.Integer")
     is_intrinsic_method = true;
+  // Static String factories (valueOf/join/format) lower to a fresh axiomatic
+  // String VALUE, never a call into the model body -- see jimple_string_lower.
+  if (jimple_is_string_class(base_class))
+    is_intrinsic_method = true;
 }
 
 exprt jimple_expr_invoke::to_exprt(
@@ -562,6 +757,22 @@ exprt jimple_expr_invoke::to_exprt(
   {
     code_skipt skip;
     return skip;
+  }
+
+  // Engine-native String static factory (valueOf/join/format): a fresh opaque
+  // String VALUE, never the model body.
+  if (jimple_is_string_class(base_class))
+  {
+    std::vector<exprt> args;
+    for (const auto &p : parameters)
+      args.push_back(p->to_exprt(ctx, class_name, function_name));
+    bool is_value = false;
+    exprt v = jimple_string_lower(
+      ctx, class_name, function_name, method, nil_exprt(), args, lhs, is_value);
+    if (!v.is_nil())
+      return v;
+    jimple_nondet nondet(method);
+    return nondet.to_exprt(ctx, class_name, function_name);
   }
 
   // Autoboxing: Integer.valueOf(int) returns a BOXED reference. Represent the box as a tagged pointer
@@ -649,6 +860,11 @@ void jimple_virtual_invoke::from_json(const json &j)
   // Object/array clone() lowers to the receiver reference (a VALUE), not a call -- see to_exprt.
   if (method == "clone_1")
     is_intrinsic_method = true;
+  // Every java.lang.String instance method lowers to an axiomatic VALUE
+  // (length -> int, equals -> bool, substring -> a fresh String ref), never a
+  // call into the char-array model body -- see jimple_string_lower in to_exprt.
+  if (jimple_is_string_class(base_class))
+    is_intrinsic_method = true;
 }
 
 exprt jimple_virtual_invoke::to_exprt(
@@ -675,6 +891,28 @@ exprt jimple_virtual_invoke::to_exprt(
   {
     code_skipt skip;
     return skip;
+  }
+
+  // Engine-native String: lower length/charAt/equals/substring/... axiomatically
+  // (no char-array model body, no backing()/value deref). Bypasses the runtime
+  // dispatch below so the shipped model method is never reached.
+  if (jimple_is_string_class(base_class))
+  {
+    exprt recv =
+      (variable != "")
+        ? jimple_symbol(variable).to_exprt(ctx, class_name, function_name)
+        : nil_exprt();
+    std::vector<exprt> args;
+    for (const auto &p : parameters)
+      args.push_back(p->to_exprt(ctx, class_name, function_name));
+    bool is_value = false;
+    exprt v = jimple_string_lower(
+      ctx, class_name, function_name, method, recv, args, lhs, is_value);
+    if (!v.is_nil())
+      return v; // a VALUE (is_intrinsic_method drives the assignment lowering)
+    // Unrecognised String method -> nondet over-approximation.
+    jimple_nondet nondet(method);
+    return nondet.to_exprt(ctx, class_name, function_name);
   }
 
   // Auto-UNBOXING: Integer.intValue() reads the boxed int back out of the tagged pointer that
@@ -743,10 +981,41 @@ exprt jimple_virtual_invoke::to_exprt(
   auto candidates =
     jimple_hierarchy::candidate_overrides(ctx, base_class, recv_static, method);
 
+  // A candidate override resolving to java.lang.String (e.g. a polymorphic
+  // element.equals(x) where the runtime element is a String) must use the
+  // engine-native axiomatic lowering, NOT the char-array model body -- otherwise
+  // dispatch re-enters String.equals/length and unwinds the backing array we
+  // bypassed at direct String call sites. Build the intrinsic as a code block
+  // (assign the value to lhs, or skip when discarded) so it slots into the
+  // dispatch chain where make_call's block would go.
+  auto make_string_call = [&](const std::string &callee_qual) -> codet
+  {
+    std::vector<exprt> args;
+    for (const auto &p : parameters)
+      args.push_back(p->to_exprt(ctx, class_name, function_name));
+    bool is_value = false;
+    exprt v = jimple_string_lower(
+      ctx, class_name, function_name, method, recv, args, lhs, is_value);
+    if (v.is_nil())
+    {
+      jimple_nondet nondet(method);
+      v = nondet.to_exprt(ctx, class_name, function_name);
+    }
+    if (lhs.is_nil())
+      return code_skipt();
+    if (v.type() != lhs.type())
+      v = typecast_exprt(v, lhs.type());
+    return code_assignt(lhs, v);
+  };
+
   // Build the call block targeting `callee_qual` (a "Class:method" symbol),
   // wiring @this and @parameters exactly as a non-virtual call would.
-  auto make_call = [&](const std::string &callee_qual) -> code_blockt
+  auto make_call = [&](const std::string &callee_qual) -> codet
   {
+    std::string cc = callee_qual.substr(0, callee_qual.rfind(':'));
+    if (jimple_is_string_class(cc))
+      return make_string_call(callee_qual);
+
     code_blockt blk;
     code_function_callt call;
     symbolt &symbol = require_symbol(ctx, callee_qual);

@@ -501,10 +501,16 @@ exprt jimple_invoke::to_exprt(
     return skip;
   }
 
-  // java.lang.String calls are NOT skipped: they dispatch to the char-array
-  // String MODEL's methods (the producer puts the model on the classpath and
-  // emits it). A missing model method then fails loudly via require_symbol
-  // below rather than being silently dropped.
+  // Engine-native String: every statement-position String call is a no-op.
+  // `<init>(...)` does nothing (the `new String` allocation already produced a
+  // valid opaque object with a non-negative @string_length); any other String
+  // method here is value-returning with its result discarded, so skip it. This
+  // bypasses the producer's char-array model bodies entirely.
+  if (jimple_is_string_class(base_class))
+  {
+    code_skipt skip;
+    return skip;
+  }
 
   if (base_class == "java.lang.AssertionError")
   {

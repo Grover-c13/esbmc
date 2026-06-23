@@ -51,6 +51,38 @@ bool jimple_has_class_id(const exprt &recv);
 /// jimple_expr.cpp.
 exprt jimple_class_id_member(exprt recv);
 
+/// `true` for the engine-native String reference type. `java.lang.String` is
+/// lowered axiomatically (an opaque object with a symbolic non-negative
+/// `@string_length`), so a constructed-but-never-inspected String costs nothing
+/// and there is no char-array backing to materialise / unwind / fault on.
+bool jimple_is_string_class(const std::string &class_name);
+
+/// `true` when `recv`'s pointee struct carries the `@string_length` component
+/// (i.e. it is a real String object, not a nondet/opaque reference). Gate every
+/// `@string_length` read/write on this, exactly like jimple_has_class_id.
+bool jimple_has_string_length(const exprt &recv);
+
+/// Build the lvalue `recv->@string_length` (a 32-bit int). WRITE a fresh
+/// non-negative value at `new String`, READ it for `length()`/`isEmpty()`.
+/// `recv` is consumed. Caller must verify jimple_has_string_length(recv).
+exprt jimple_string_length_member(exprt recv);
+
+/// Lower a `java.lang.String` method call to a sound axiomatic expression,
+/// bypassing the producer-shipped char-array model body. Returns the lowering on
+/// success and `is_value` is set when the lowering is a plain VALUE (e.g.
+/// `length()` -> an int) rather than a code block. Returns nil when the method
+/// is not a recognised String intrinsic (caller then falls back to the model /
+/// nondet path). `recv` is the receiver lvalue ("" / nil for static methods).
+exprt jimple_string_lower(
+  contextt &ctx,
+  const std::string &class_name,
+  const std::string &function_name,
+  const std::string &method,
+  const exprt &recv,
+  const std::vector<exprt> &args,
+  const exprt &lhs,
+  bool &is_value);
+
 /**
  * @brief A number constant (in decimal)
  *

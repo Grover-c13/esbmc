@@ -2,6 +2,7 @@
 #include <fstream>
 #include <jimple-frontend/AST/jimple_file.h>
 #include <jimple-frontend/AST/jimple_hierarchy.h>
+#include <jimple-frontend/AST/jimple_expr.h>
 
 #include <util/std_code.h>
 #include <util/std_types.h>
@@ -147,6 +148,23 @@ void jimple_file::declare(contextt &ctx) const
     cid.pretty_name(jimple_hierarchy::class_id_field());
     cid.set("base_name", jimple_hierarchy::class_id_field());
     t.components().push_back(cid);
+    total_size += 32;
+  }
+
+  // Engine-native java.lang.String carries a symbolic @string_length int so its
+  // methods (length/isEmpty/charAt) read a real field instead of materialising
+  // and unwinding the char-array model backing. A constructed-but-uninspected
+  // String then costs nothing. The char[] `value` component is still added below
+  // (the StringBuilder/CharSequence models read it), but String's OWN methods
+  // never touch it -- they are intercepted in jimple_expr.cpp.
+  if (jimple_is_string_class(name))
+  {
+    struct_typet::componentt len;
+    len.type() = signedbv_typet(32);
+    len.set_name("tag-" + std::string("@string_length"));
+    len.pretty_name("@string_length");
+    len.set("base_name", "@string_length");
+    t.components().push_back(len);
     total_size += 32;
   }
 
