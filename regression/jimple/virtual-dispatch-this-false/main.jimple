@@ -1,0 +1,414 @@
+[
+ {
+  "object": "Class",
+  "name": "java.lang.Object",
+  "modifiers": [
+   "public"
+  ],
+  "content": [
+   {
+    "object": "Method",
+    "name": "<init>",
+    "modifiers": [
+     "public"
+    ],
+    "type": {
+     "identifier": "void",
+     "dimensions": 0
+    },
+    "parameters": [],
+    "content": [
+     {
+      "object": "Variable",
+      "name": "this",
+      "type": {
+       "identifier": "java.lang.Object",
+       "dimensions": 0
+      }
+     },
+     {
+      "object": "SetVariable",
+      "lhs": {
+       "expr_type": "symbol",
+       "value": "this"
+      },
+      "rhs": {
+       "expr_type": "symbol",
+       "value": "@this"
+      }
+     },
+     {
+      "object": "Return"
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "object": "Class",
+  "name": "Base",
+  "extends": "java.lang.Object",
+  "modifiers": [
+   "public"
+  ],
+  "content": [
+   {
+    "object": "Method",
+    "name": "<init>",
+    "modifiers": [
+     "public"
+    ],
+    "type": {
+     "identifier": "void",
+     "dimensions": 0
+    },
+    "parameters": [],
+    "content": [
+     {
+      "object": "Variable",
+      "name": "this",
+      "type": {
+       "identifier": "Base",
+       "dimensions": 0
+      }
+     },
+     {
+      "object": "SetVariable",
+      "lhs": {
+       "expr_type": "symbol",
+       "value": "this"
+      },
+      "rhs": {
+       "expr_type": "symbol",
+       "value": "@this"
+      }
+     },
+     {
+      "base_class": "java.lang.Object",
+      "object": "SpecialInvoke",
+      "method": "<init>",
+      "variable": "this",
+      "parameters": []
+     },
+     {
+      "object": "Return"
+     }
+    ]
+   },
+   {
+    "object": "Method",
+    "name": "value",
+    "modifiers": [
+     "public"
+    ],
+    "type": {
+     "identifier": "int",
+     "dimensions": 0
+    },
+    "parameters": [],
+    "content": [
+     {
+      "object": "Variable",
+      "name": "this",
+      "type": {
+       "identifier": "Base",
+       "dimensions": 0
+      }
+     },
+     {
+      "object": "SetVariable",
+      "lhs": {
+       "expr_type": "symbol",
+       "value": "this"
+      },
+      "rhs": {
+       "expr_type": "symbol",
+       "value": "@this"
+      }
+     },
+     {
+      "object": "Return",
+      "value": {
+       "expr_type": "constant",
+       "value": "0"
+      }
+     }
+    ]
+   },
+   {
+    "object": "Method",
+    "name": "describe",
+    "modifiers": [
+     "public"
+    ],
+    "type": {
+     "identifier": "int",
+     "dimensions": 0
+    },
+    "parameters": [],
+    "content": [
+     {
+      "object": "Variable",
+      "name": "this",
+      "type": {
+       "identifier": "Base",
+       "dimensions": 0
+      }
+     },
+     {
+      "object": "Variable",
+      "name": "$r",
+      "type": {
+       "identifier": "int",
+       "dimensions": 0
+      }
+     },
+     {
+      "object": "SetVariable",
+      "lhs": {
+       "expr_type": "symbol",
+       "value": "this"
+      },
+      "rhs": {
+       "expr_type": "symbol",
+       "value": "@this"
+      }
+     },
+     {
+      "object": "SetVariable",
+      "lhs": {
+       "expr_type": "symbol",
+       "value": "$r"
+      },
+      "rhs": {
+       "expr_type": "virtual_invoke",
+       "base_class": "Base",
+       "method": "value",
+       "name": "this",
+       "parameters": []
+      }
+     },
+     {
+      "object": "Return",
+      "value": {
+       "expr_type": "symbol",
+       "value": "$r"
+      }
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "object": "Class",
+  "name": "Derived",
+  "extends": "Base",
+  "modifiers": [
+   "public"
+  ],
+  "content": [
+   {
+    "object": "Method",
+    "name": "<init>",
+    "modifiers": [
+     "public"
+    ],
+    "type": {
+     "identifier": "void",
+     "dimensions": 0
+    },
+    "parameters": [],
+    "content": [
+     {
+      "object": "Variable",
+      "name": "this",
+      "type": {
+       "identifier": "Derived",
+       "dimensions": 0
+      }
+     },
+     {
+      "object": "SetVariable",
+      "lhs": {
+       "expr_type": "symbol",
+       "value": "this"
+      },
+      "rhs": {
+       "expr_type": "symbol",
+       "value": "@this"
+      }
+     },
+     {
+      "base_class": "Base",
+      "object": "SpecialInvoke",
+      "method": "<init>",
+      "variable": "this",
+      "parameters": []
+     },
+     {
+      "object": "Return"
+     }
+    ]
+   },
+   {
+    "object": "Method",
+    "name": "value",
+    "modifiers": [
+     "public"
+    ],
+    "type": {
+     "identifier": "int",
+     "dimensions": 0
+    },
+    "parameters": [],
+    "content": [
+     {
+      "object": "Variable",
+      "name": "this",
+      "type": {
+       "identifier": "Derived",
+       "dimensions": 0
+      }
+     },
+     {
+      "object": "SetVariable",
+      "lhs": {
+       "expr_type": "symbol",
+       "value": "this"
+      },
+      "rhs": {
+       "expr_type": "symbol",
+       "value": "@this"
+      }
+     },
+     {
+      "object": "Return",
+      "value": {
+       "expr_type": "constant",
+       "value": "42"
+      }
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "object": "Class",
+  "name": "T",
+  "extends": "java.lang.Object",
+  "modifiers": [
+   "public"
+  ],
+  "content": [
+   {
+    "object": "Method",
+    "name": "main",
+    "modifiers": [
+     "public",
+     "static"
+    ],
+    "type": {
+     "identifier": "void",
+     "dimensions": 0
+    },
+    "parameters": [
+     {
+      "identifier": "java.lang.String",
+      "dimensions": 1
+     }
+    ],
+    "content": [
+     {
+      "object": "Variable",
+      "name": "d",
+      "type": {
+       "identifier": "Derived",
+       "dimensions": 0
+      }
+     },
+     {
+      "object": "Variable",
+      "name": "b",
+      "type": {
+       "identifier": "Base",
+       "dimensions": 0
+      }
+     },
+     {
+      "object": "Variable",
+      "name": "r",
+      "type": {
+       "identifier": "int",
+       "dimensions": 0
+      }
+     },
+     {
+      "object": "SetVariable",
+      "lhs": {
+       "expr_type": "symbol",
+       "value": "d"
+      },
+      "rhs": {
+       "expr_type": "new",
+       "type": {
+        "identifier": "Derived",
+        "dimensions": 0
+       }
+      }
+     },
+     {
+      "base_class": "Derived",
+      "object": "SpecialInvoke",
+      "method": "<init>",
+      "variable": "d",
+      "parameters": []
+     },
+     {
+      "object": "SetVariable",
+      "lhs": {
+       "expr_type": "symbol",
+       "value": "b"
+      },
+      "rhs": {
+       "expr_type": "symbol",
+       "value": "d"
+      }
+     },
+     {
+      "object": "SetVariable",
+      "lhs": {
+       "expr_type": "symbol",
+       "value": "r"
+      },
+      "rhs": {
+       "expr_type": "virtual_invoke",
+       "base_class": "Base",
+       "method": "describe",
+       "name": "b",
+       "parameters": []
+      }
+     },
+     {
+      "object": "Assertion",
+      "expression": {
+       "expr_type": "binop",
+       "operator": "==",
+       "lhs": {
+        "expr_type": "symbol",
+        "value": "r"
+       },
+       "rhs": {
+        "expr_type": "constant",
+        "value": "0"
+       }
+      },
+      "comment": "dispatch result"
+     },
+     {
+      "object": "Return"
+     }
+    ]
+   }
+  ]
+ }
+]

@@ -39,6 +39,18 @@ public:
   static std::shared_ptr<jimple_expr> get_expression(const json &j);
 };
 
+/// True when `recv`'s pointee struct carries the `@class_identifier` component.
+/// Opaque/unresolved class types lack it; gate cid read/write on this to avoid
+/// naming a non-existent member. Defined in jimple_expr.cpp.
+bool jimple_has_class_id(const exprt &recv);
+
+/// Build the lvalue `recv->@class_identifier` (a 32-bit int) for a receiver
+/// pointer expression. WRITE it at `new` (the concrete class id), READ it at a
+/// virtual call to dispatch over the object's real runtime type. `recv` is
+/// consumed. Caller must verify jimple_has_class_id(recv). Defined in
+/// jimple_expr.cpp.
+exprt jimple_class_id_member(exprt recv);
+
 /**
  * @brief A number constant (in decimal)
  *
@@ -323,13 +335,17 @@ class jimple_new : public jimple_newarray
 {
 public:
   virtual void from_json(const json &j) override;
-  virtual exprt to_exprt(
-    contextt &,
-    const std::string &,
-    const std::string &) const override;
+  virtual exprt
+  to_exprt(contextt &, const std::string &, const std::string &) const override;
   virtual std::string to_string() const override
   {
     return "Jimple New";
+  }
+
+  /// Concrete class name being allocated (used to stamp the runtime class id).
+  std::string get_type_name() const
+  {
+    return type ? type->name : std::string();
   }
 };
 

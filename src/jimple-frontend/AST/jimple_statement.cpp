@@ -2,6 +2,8 @@
 #include <util/std_expr.h>
 #include <util/std_types.h>
 #include <jimple-frontend/AST/jimple_statement.h>
+#include <jimple-frontend/AST/jimple_expr.h>
+#include <jimple-frontend/AST/jimple_hierarchy.h>
 #include <util/arith_tools.h>
 #include <util/expr_util.h>
 #include <util/message.h>
@@ -172,7 +174,9 @@ exprt jimple_assignment::to_exprt(
   }
 
   auto dyn2_expr = std::dynamic_pointer_cast<jimple_virtual_invoke>(rhs);
-  if (dyn2_expr && !dyn2_expr->is_nondet_call() && !dyn2_expr->is_intrinsic_method)
+  if (
+    dyn2_expr && !dyn2_expr->is_nondet_call() &&
+    !dyn2_expr->is_intrinsic_method)
   {
     dyn2_expr->set_lhs(lhs_handle);
     return rhs->to_exprt(ctx, class_name, function_name);
@@ -193,6 +197,31 @@ exprt jimple_assignment::to_exprt(
   }
 
   code_assignt assign(lhs_handle, from_expr);
+
+  // Stamp the runtime class id on a freshly-allocated object: `lhs = new T`
+  // then `lhs->@class_identifier = id(T)`. Read back at a virtual call to
+  // dispatch over T even when the reference is later widened to a base/interface
+  // type (the only sound way to bind `this.m()` in an inherited base method).
+  // Gate on the LHS struct actually carrying the @class_identifier component:
+  // when the LHS is declared with an opaque/unresolved static type (modelled as
+  // pointer-to-empty), the component is absent and the write would name a
+  // non-existent member. Such an object also cannot be dispatched on later
+  // (the read site gates the same way), so skipping the stamp is consistent.
+  auto new_expr = std::dynamic_pointer_cast<jimple_new>(rhs);
+  if (new_expr && jimple_has_class_id(lhs_handle))
+  {
+    int id = jimple_hierarchy::class_id(new_expr->get_type_name());
+    if (id != 0)
+    {
+      code_blockt block;
+      block.copy_to_operands(assign);
+      block.copy_to_operands(code_assignt(
+        jimple_class_id_member(lhs_handle),
+        from_integer(id, signedbv_typet(32))));
+      return block;
+    }
+  }
+
   return assign;
 }
 
@@ -394,7 +423,8 @@ exprt jimple_invoke::to_exprt(
     symbolt *target = ctx.find_symbol(target_name.str());
     if (target == nullptr)
     {
-      log_error("jimple spawn: target function {} not found", target_name.str());
+      log_error(
+        "jimple spawn: target function {} not found", target_name.str());
       abort();
     }
 
@@ -502,8 +532,10 @@ exprt jimple_invoke::to_exprt(
   // the AssertionError / IllegalStateException handling above and avoids building a call into the bare
   // nondet stub constructor the producer emits for a library exception (which aborts goto conversion).
   {
-    auto ends_with = [](const std::string &s, const std::string &suf) {
-      return s.size() >= suf.size() && s.compare(s.size() - suf.size(), suf.size(), suf) == 0;
+    auto ends_with = [](const std::string &s, const std::string &suf)
+    {
+      return s.size() >= suf.size() &&
+             s.compare(s.size() - suf.size(), suf.size(), suf) == 0;
     };
     if (
       method.rfind("<init>", 0) == 0 &&
@@ -526,7 +558,8 @@ exprt jimple_invoke::to_exprt(
   symbolt *isym = ctx.find_symbol(oss.str());
   if (!isym)
   {
-    log_warning("Unresolved invoke {} -> skipped (over-approximation)", oss.str());
+    log_warning(
+      "Unresolved invoke {} -> skipped (over-approximation)", oss.str());
     return code_skipt();
   }
   symbolt &symbol = *isym;

@@ -1,0 +1,6 @@
+CORE
+main.jimple
+--force-malloc-success
+^VERIFICATION SUCCESSFUL$
+--
+^warning: ignoring

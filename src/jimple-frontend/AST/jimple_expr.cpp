@@ -27,6 +27,47 @@ static symbolt &require_symbol(contextt &ctx, const std::string &name)
   return *s;
 }
 
+// True when `recv`'s pointee is a struct that actually carries the runtime
+// class-id component. Opaque/unresolved class types resolve to
+// pointer_typet(empty_typet()) (jimple_type::get_base_type) and have NO such
+// component, so reading/writing `@class_identifier` on them would name a
+// non-existent member. Both the dispatch read and the `new` write gate on this.
+bool jimple_has_class_id(const exprt &recv)
+{
+  typet t = recv.type();
+  if (t.id() == "pointer")
+    t = t.subtype();
+  if (t.id() != "struct")
+    return false;
+  const std::string field =
+    "tag-" + std::string(jimple_hierarchy::class_id_field());
+  for (const auto &comp : to_struct_type(t).components())
+    if (comp.get_name() == field)
+      return true;
+  return false;
+}
+
+// Build the lvalue `recv->@class_identifier` (an int) for a receiver expression
+// that is a pointer-to-struct. Used to WRITE the runtime class id at `new` and
+// READ it back at a virtual call for dispatch. `recv` is consumed. The caller
+// must have verified jimple_has_class_id(recv) first.
+exprt jimple_class_id_member(exprt recv)
+{
+  member_exprt op(
+    recv,
+    "tag-" + std::string(jimple_hierarchy::class_id_field()),
+    signedbv_typet(32));
+  exprt &base = op.struct_op();
+  if (base.type().is_pointer())
+  {
+    exprt deref("dereference");
+    deref.type() = base.type().subtype();
+    deref.move_to_operands(base);
+    base.swap(deref);
+  }
+  return std::move(op);
+}
+
 void jimple_constant::from_json(const json &j)
 {
   j.at("value").get_to(value);
@@ -94,7 +135,11 @@ exprt jimple_symbol::to_exprt(
   if (var_name == "@caughtexception" && ctx.find_symbol(symbol_name) == nullptr)
   {
     symbolt caught = create_jimple_symbolt(
-      pointer_typet(empty_typet()), class_name, var_name, symbol_name, function_name);
+      pointer_typet(empty_typet()),
+      class_name,
+      var_name,
+      symbol_name,
+      function_name);
     caught.lvalue = true;
     caught.file_local = true;
     ctx.move_symbol_to_context(caught);
@@ -393,9 +438,16 @@ static bool in_static_init(const std::string &function_name)
 // for USER code (and any enum). This keeps the suite fast while fixing user static-init dangles.
 static bool is_model_class(const std::string &class_name)
 {
-  static const char *prefixes[] = {"java.",  "javax.",       "kotlin.",
-                                    "kotlinx.", "jdk.",       "sun.",
-                                    "scala.", "org.cprover.", "org.bmc4j."};
+  static const char *prefixes[] = {
+    "java.",
+    "javax.",
+    "kotlin.",
+    "kotlinx.",
+    "jdk.",
+    "sun.",
+    "scala.",
+    "org.cprover.",
+    "org.bmc4j."};
   for (const char *p : prefixes)
     if (class_name.rfind(p, 0) == 0)
       return true;
@@ -422,15 +474,14 @@ static bool needs_heap_alloc(
 // Build the C++-style `cpp_new`/`cpp_new[]` heap allocation side effect. goto_convert's do_cpp_new reads
 // the element COUNT from the `size` field (size_irep), multiplies by sizeof, and hands symex_cpp_new a
 // fresh persistent `symex_dynamic::dynamic_N` object (unique counter -> no dangle, no aliasing).
-static exprt make_cpp_new(
-  contextt &ctx,
-  const typet &element_type,
-  const exprt *count)
+static exprt
+make_cpp_new(contextt &ctx, const typet &element_type, const exprt *count)
 {
   side_effect_exprt new_expr(count ? "cpp_new[]" : "cpp_new");
   new_expr.type() = pointer_typet(element_type);
   if (count)
-    new_expr.size(*count); // element count goes in `size`, NOT cmt_size (do_cpp_new overwrites cmt_size)
+    new_expr.size(
+      *count); // element count goes in `size`, NOT cmt_size (do_cpp_new overwrites cmt_size)
 
   namespacet ns(ctx);
   exprt size_of = c_sizeof(element_type, ns);
@@ -456,7 +507,8 @@ exprt jimple_new::to_exprt(
   if (sym != nullptr)
     element_type = sym->get_type();
   else
-    element_type = type->to_typet(ctx); // unresolved class: fall back to the reference slot
+    element_type =
+      type->to_typet(ctx); // unresolved class: fall back to the reference slot
 
   if (needs_heap_alloc(element_type, class_name, function_name))
     return make_cpp_new(ctx, element_type, nullptr);
@@ -550,7 +602,8 @@ exprt jimple_expr_invoke::to_exprt(
     // surface) or an unmodelled library method reached only by dead model code. JBMC lowers an
     // unmodelled call to a nondet return; do the same here (a sound over-approximation) instead of
     // aborting GOTO generation over a frequently-unreachable call. Warn so it is never silent.
-    log_warning("Unresolved method {} -> nondet result (over-approximation)", oss.str());
+    log_warning(
+      "Unresolved method {} -> nondet result (over-approximation)", oss.str());
     jimple_nondet nondet(method);
     return nondet.to_exprt(ctx, class_name, function_name);
   }
@@ -655,91 +708,125 @@ exprt jimple_virtual_invoke::to_exprt(
     return nondet.to_exprt(ctx, class_name, function_name);
   }
 
-  code_blockt block;
-  code_function_callt call;
+  // RUNTIME VIRTUAL DISPATCH. The producer emits `base_class` = the call site's
+  // DECLARED type (an interface / superclass, e.g. java.util.List). Binding
+  // straight to `base_class:method` reaches the library model's nondet stub even
+  // when the receiver's concrete class overrides the method -- a true property
+  // (`new MyList().size() == 1` held through a `List` ref) then FALSELY REFUTES.
+  // Static-type resolution fixes the monomorphic case but NOT `this.m()` inside
+  // an inherited base method, where the static type of `this` is the base.
+  //
+  // So we dispatch on the object's RUNTIME class id (`@class_identifier`, stamped
+  // at `new`): read it back and switch over the candidate overrides. One
+  // candidate -> a direct call (no switch, identical to a monomorphic site);
+  // many -> a cid-keyed if/else chain; none -> nondet over-approximation.
 
-  // VIRTUAL DISPATCH: resolve the callee against the RECEIVER's real type, not the call site's
-  // declared base type. The producer emits `base_class` = the static type at the call (an interface
-  // / superclass, e.g. java.util.List). Binding straight to `base_class:method` reaches the library
-  // model's nondet stub even when the receiver's concrete class overrides the method -- so a true
-  // property (`new MyList().size() == 1` held through a `List` ref) comes back FALSELY REFUTED.
-  // Walk from the receiver's struct type up its superclass chain to the nearest body, exactly like
-  // the JVM. When the receiver type IS the base (a genuinely base-typed / polymorphic reference), the
-  // resolution lands back on base_class and behaviour is unchanged.
-  std::string callee_class = base_class;
+  // Static type of the receiver variable, for exact monomorphic dispatch.
+  std::string recv_static;
+  exprt recv;
   if (variable != "")
   {
-    exprt recv =
-      jimple_symbol(variable).to_exprt(ctx, class_name, function_name);
+    recv = jimple_symbol(variable).to_exprt(ctx, class_name, function_name);
     typet rt = recv.type();
     if (rt.id() == "pointer")
       rt = rt.subtype();
-    std::string recv_class;
     if (rt.id() == "struct")
-      recv_class = to_struct_type(rt).tag().as_string();
+      recv_static = to_struct_type(rt).tag().as_string();
     else if (rt.id() == "symbol")
     {
       std::string tag = rt.get("identifier").as_string();
       if (tag.compare(0, 4, "tag-") == 0)
-        recv_class = tag.substr(4);
+        recv_static = tag.substr(4);
     }
-    if (!recv_class.empty())
+  }
+
+  auto candidates =
+    jimple_hierarchy::candidate_overrides(ctx, base_class, recv_static, method);
+
+  // Build the call block targeting `callee_qual` (a "Class:method" symbol),
+  // wiring @this and @parameters exactly as a non-virtual call would.
+  auto make_call = [&](const std::string &callee_qual) -> code_blockt
+  {
+    code_blockt blk;
+    code_function_callt call;
+    symbolt &symbol = require_symbol(ctx, callee_qual);
+    call.function() = symbol_expr(symbol);
+    if (!lhs.is_nil())
+      call.lhs() = lhs;
+
+    std::string callee_class = callee_qual.substr(0, callee_qual.rfind(':'));
+    if (variable != "")
     {
-      std::string resolved =
-        jimple_hierarchy::resolve_method(ctx, recv_class, method);
-      if (!resolved.empty())
-        callee_class = resolved;
+      exprt this_expression =
+        jimple_symbol(variable).to_exprt(ctx, class_name, function_name);
+      call.arguments().push_back(this_expression);
+      auto temp = get_symbol_name(callee_class, method, "@this");
+      symbolt &added = require_symbol(ctx, temp);
+      blk.operands().push_back(
+        code_assignt(symbol_expr(added), this_expression));
     }
-  }
+    for (long unsigned int i = 0; i < parameters.size(); i++)
+    {
+      exprt parameter_expr =
+        parameters[i]->to_exprt(ctx, class_name, function_name);
+      call.arguments().push_back(parameter_expr);
+      std::ostringstream pn;
+      pn << "@parameter" << i;
+      auto temp = get_symbol_name(callee_class, method, pn.str());
+      symbolt &added = require_symbol(ctx, temp);
+      blk.operands().push_back(
+        code_assignt(symbol_expr(added), parameter_expr));
+    }
+    blk.operands().push_back(call);
+    return blk;
+  };
 
-  std::ostringstream oss;
-  oss << callee_class << ":" << method;
-
-  // Unresolved virtual method -> nondet over-approximation (jbmc semantics), not an abort. Same
-  // rationale as jimple_expr_invoke::to_exprt: an unmodelled / base-typed-class call reached only by
-  // dead model code must not kill GOTO generation. Warn so it stays visible.
-  symbolt *vsym = ctx.find_symbol(oss.str());
-  if (!vsym)
+  // No body anywhere -> unmodelled / abstract-only call (e.g. a java.util.function
+  // interface the producer never linked). JBMC lowers this to a nondet return; do
+  // the same (sound over-approximation). Must return CODE: assign the nondet to
+  // the result in assignment position, or skip it when the result is discarded
+  // (statement position). Returning the bare nondet side-effect would leave a
+  // non-code operand in the enclosing block -> goto_convert abort.
+  if (candidates.empty())
   {
-    log_warning("Unresolved method {} -> nondet result (over-approximation)", oss.str());
+    log_warning(
+      "Unresolved virtual method {}:{} -> nondet result (over-approximation)",
+      base_class,
+      method);
+    if (lhs.is_nil())
+      return code_skipt();
     jimple_nondet nondet(method);
-    return nondet.to_exprt(ctx, class_name, function_name);
-  }
-  symbolt &symbol = *vsym;
-  call.function() = symbol_expr(symbol);
-  if (!lhs.is_nil())
-  {
-    call.lhs() = lhs;
+    exprt nd = nondet.to_exprt(ctx, class_name, function_name);
+    nd.type() = lhs.type();
+    return code_assignt(lhs, nd);
   }
 
-  if (variable != "")
-  {
-    // Let's add @THIS
-    auto this_expression =
-      jimple_symbol(variable).to_exprt(ctx, class_name, function_name);
-    call.arguments().push_back(this_expression);
-    auto temp = get_symbol_name(callee_class, method, "@this");
-    symbolt &added_symbol = require_symbol(ctx, temp);
-    code_assignt assign(symbol_expr(added_symbol), this_expression);
-    block.operands().push_back(assign);
-  }
+  // Monomorphic: exactly one possible body -> a plain call, no dispatch cost.
+  // Also when there is no receiver to read a runtime id from (variable == "")
+  // or the receiver's static type is opaque (no @class_identifier component,
+  // e.g. an unresolved interface modelled as pointer-to-empty): we cannot read a
+  // runtime id, so bind to the static-type-rooted body (candidates.front(), the
+  // receiver's declared type). JBMC binds the same way for a fully-opaque type.
+  if (candidates.size() == 1 || variable == "" || !jimple_has_class_id(recv))
+    return make_call(candidates.front().second);
 
-  for (long unsigned int i = 0; i < parameters.size(); i++)
+  // Polymorphic: switch on the receiver's runtime class id. The trailing
+  // candidate is the chain's `else`, so an object whose runtime id matches no
+  // explicit arm runs the root's own body (candidate_overrides puts the
+  // static-type/base body last). Build innermost-first so the chain nests as
+  // if (cid==id0) c0 else if (cid==id1) c1 else ... else cN.
+  exprt cid_read = jimple_class_id_member(recv);
+  codet chain = make_call(candidates.back().second);
+  for (long unsigned int k = candidates.size() - 1; k-- > 0;)
   {
-    // Just adding the arguments should be enough to set the parameters
-    auto parameter_expr =
-      parameters[i]->to_exprt(ctx, class_name, function_name);
-    call.arguments().push_back(parameter_expr);
-    // Hack, manually adding parameters, this should be done at symex
-    std::ostringstream oss;
-    oss << "@parameter" << i;
-    auto temp = get_symbol_name(callee_class, method, oss.str());
-    symbolt &added_symbol = require_symbol(ctx, temp);
-    code_assignt assign(symbol_expr(added_symbol), parameter_expr);
-    block.operands().push_back(assign);
+    code_ifthenelset ite;
+    ite.cond() = equality_exprt(
+      cid_read, from_integer(candidates[k].first, signedbv_typet(32)));
+    ite.then_case() = make_call(candidates[k].second);
+    ite.else_case() = chain;
+    chain = ite;
   }
-  block.operands().push_back(call);
-  return block;
+  return chain;
 }
 
 exprt jimple_newarray::to_exprt(
@@ -857,7 +944,10 @@ exprt jimple_static_member::to_exprt(
     // typically reached only by dead model code. Register an on-demand, zero-initialised static global
     // (like jimple_file's own static-field globals) so both reads and assignment LHS resolve, instead of
     // aborting GOTO generation. Warn so it stays visible.
-    log_warning("Unresolved static field {}.{} -> on-demand global (over-approximation)", from, field);
+    log_warning(
+      "Unresolved static field {}.{} -> on-demand global (over-approximation)",
+      from,
+      field);
     std::string ondemand_id = from + "." + field;
     typet ft = type->to_typet(ctx);
     symbolt g = create_jimple_symbolt(ft, from, field, ondemand_id);

@@ -1,8 +1,10 @@
 #include <map>
 #include <fstream>
 #include <jimple-frontend/AST/jimple_file.h>
+#include <jimple-frontend/AST/jimple_hierarchy.h>
 
 #include <util/std_code.h>
+#include <util/std_types.h>
 #include <util/expr_util.h>
 
 // (De)-Serialization helpers (from jimple_ast.h)
@@ -132,8 +134,22 @@ void jimple_file::declare(contextt &ctx) const
   ctx.move_symbol_to_context(symbol);
   symbolt *added_symbol = ctx.find_symbol(symbol_name);
 
-  // Add class/interface members
+  // Runtime type tag. Every object's FIRST component is an int holding the id
+  // of its concrete (allocated) class, written at `new` and read back at a
+  // virtual call to dispatch over the real runtime type -- the only sound way
+  // to bind `this.m()` inside an inherited base method (see jimple_hierarchy).
+  // Kept first so a member access is at a fixed offset regardless of subclass.
   auto total_size = 0;
+  {
+    struct_typet::componentt cid;
+    cid.type() = signedbv_typet(32);
+    cid.set_name("tag-" + std::string(jimple_hierarchy::class_id_field()));
+    cid.pretty_name(jimple_hierarchy::class_id_field());
+    cid.set("base_name", jimple_hierarchy::class_id_field());
+    t.components().push_back(cid);
+    total_size += 32;
+  }
+
   for (auto const &field : body)
   {
     auto cf = std::dynamic_pointer_cast<jimple_class_field>(field);
